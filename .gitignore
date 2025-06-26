@@ -1,0 +1,107 @@
+# General OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# macOS
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+ehthumbs.db
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+pip-log.txt
+*.manifest
+*.spec
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Data Science
+*.h5
+*.hdf5
+*.parquet
+*.feather
+*.orc
+*.sav
+*.dta
+*.rda
+*.rds
+*.pkl
+*.joblib
+*.npy
+*.npz
+*.mat
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# VS Code settings
+.vscode/
+
+# Spyder settings
+.spyderproject
+.spyproject
+
+# PyCharm
+.idea/
+
+# Backup files
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+
+# Test & coverage
+.coverage
+.tox/
+.nox/
+pytest_cache/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# MyPy
+.mypy_cache/
+
+# Profiling
+.prof
+
+# Byte-compiled
+*.pyc
+*.pyo
+
+# Git
+*.orig
+*.rej
+*.patch
+*.diff
