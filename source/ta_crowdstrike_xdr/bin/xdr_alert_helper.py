@@ -438,7 +438,7 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                     latest_timestamp = event['updated_timestamp']
             
             # Send events to Splunk
-            sourcetype = "crowdstrike:alerts"
+            sourcetype = "crowdstrike:unified:alert:json"
             index = input_item.get("index", "default")
             
             try:

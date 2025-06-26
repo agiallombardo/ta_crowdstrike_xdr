@@ -433,7 +433,7 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 event['ta_data'] = ta_data
             
             # Send events to Splunk
-            sourcetype = "crowdstrike:prevention_policies"
+            sourcetype = "crowdstrike:prevention_policies:json"
             index = input_item.get("index", "default")
             
             try:
