@@ -73,6 +73,13 @@ fields = [
             min_len=1, 
         )
     ), 
+    field.RestField(
+        'cloud',
+        required=True,
+        encrypted=False,
+        default=None,
+        validator=None
+    ), 
 
     field.RestField(
         'disabled',

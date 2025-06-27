@@ -1,4 +1,3 @@
-
 import import_declare_test
 
 from splunktaucclib.rest_handler.endpoint import (
@@ -73,6 +72,13 @@ fields = [
             min_len=1, 
         )
     ), 
+    field.RestField(
+        'cloud',
+        required=True,
+        encrypted=False,
+        default=None,
+        validator=None
+    ), 
 
     field.RestField(
         'disabled',
@@ -86,7 +92,7 @@ model = RestModel(fields, name=None, special_fields=special_fields)
 
 
 endpoint = DataInputModel(
-    'xdr_alert',
+    'unified_xdr_alerts',
     model,
 )
 

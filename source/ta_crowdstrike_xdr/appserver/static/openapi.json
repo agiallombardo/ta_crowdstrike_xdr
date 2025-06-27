@@ -2,7 +2,7 @@
     "openapi": "3.0.0",
     "info": {
         "title": "ta_crowdstrike_xdr",
-        "version": "0.0.1",
+        "version": "1.0.5",
         "description": "Crowdstrike XDR & Health Add-on for Splunk",
         "contact": {
             "name": ""
@@ -33,6 +33,9 @@
                     "name": {
                         "type": "string"
                     },
+                    "username": {
+                        "type": "string"
+                    },
                     "api_key": {
                         "type": "string",
                         "format": "password"
@@ -42,6 +45,9 @@
             "account_without_name": {
                 "type": "object",
                 "properties": {
+                    "username": {
+                        "type": "string"
+                    },
                     "api_key": {
                         "type": "string",
                         "format": "password"
@@ -54,11 +60,8 @@
                     "loglevel": {
                         "type": "string",
                         "enum": [
-                            "DEBUG",
                             "INFO",
-                            "WARNING",
-                            "ERROR",
-                            "CRITICAL"
+                            "ERROR"
                         ]
                     }
                 }
@@ -69,11 +72,8 @@
                     "loglevel": {
                         "type": "string",
                         "enum": [
-                            "DEBUG",
                             "INFO",
-                            "WARNING",
-                            "ERROR",
-                            "CRITICAL"
+                            "ERROR"
                         ]
                     }
                 }
@@ -92,6 +92,15 @@
                     },
                     "account": {
                         "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
                     },
                     "disabled": {
                         "type": "string",
@@ -113,6 +122,15 @@
                     },
                     "account": {
                         "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
                     },
                     "disabled": {
                         "type": "string",
@@ -137,10 +155,19 @@
                     },
                     "account": {
                         "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
                     }
                 }
             },
-            "xdr_alert": {
+            "unified_xdr_alerts": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -155,6 +182,15 @@
                     "account": {
                         "type": "string"
                     },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
+                    },
                     "disabled": {
                         "type": "string",
                         "enum": [
@@ -164,7 +200,7 @@
                     }
                 }
             },
-            "xdr_alert_without_name": {
+            "unified_xdr_alerts_without_name": {
                 "type": "object",
                 "properties": {
                     "interval": {
@@ -176,6 +212,15 @@
                     "account": {
                         "type": "string"
                     },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
+                    },
                     "disabled": {
                         "type": "string",
                         "enum": [
@@ -185,7 +230,7 @@
                     }
                 }
             },
-            "xdr_alert_without_disabled": {
+            "unified_xdr_alerts_without_disabled": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -199,6 +244,15 @@
                     },
                     "account": {
                         "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
                     }
                 }
             }
@@ -748,11 +802,11 @@
                 }
             ]
         },
-        "/ta_crowdstrike_xdr_xdr_alert": {
+        "/ta_crowdstrike_xdr_unified_xdr_alerts": {
             "get": {
                 "responses": {
                     "200": {
-                        "description": "Get list of items for xdr_alert",
+                        "description": "Get list of items for unified_xdr_alerts",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -767,7 +821,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/xdr_alert_without_name"
+                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -778,13 +832,13 @@
                         }
                     }
                 },
-                "description": "Get list of items for xdr_alert",
+                "description": "Get list of items for unified_xdr_alerts",
                 "deprecated": false
             },
             "post": {
                 "responses": {
                     "200": {
-                        "description": "Create item in xdr_alert",
+                        "description": "Create item in unified_xdr_alerts",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -799,7 +853,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/xdr_alert_without_name"
+                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -810,12 +864,12 @@
                         }
                     }
                 },
-                "description": "Create item in xdr_alert",
+                "description": "Create item in unified_xdr_alerts",
                 "requestBody": {
                     "content": {
                         "application/x-www-form-urlencoded": {
                             "schema": {
-                                "$ref": "#/components/schemas/xdr_alert_without_disabled"
+                                "$ref": "#/components/schemas/unified_xdr_alerts_without_disabled"
                             }
                         }
                     },
@@ -839,11 +893,11 @@
                 }
             ]
         },
-        "/ta_crowdstrike_xdr_xdr_alert/{name}": {
+        "/ta_crowdstrike_xdr_unified_xdr_alerts/{name}": {
             "get": {
                 "responses": {
                     "200": {
-                        "description": "Get xdr_alert item details",
+                        "description": "Get unified_xdr_alerts item details",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -858,7 +912,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/xdr_alert_without_name"
+                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -869,13 +923,13 @@
                         }
                     }
                 },
-                "description": "Get xdr_alert item details",
+                "description": "Get unified_xdr_alerts item details",
                 "deprecated": false
             },
             "post": {
                 "responses": {
                     "200": {
-                        "description": "Update xdr_alert item",
+                        "description": "Update unified_xdr_alerts item",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -890,7 +944,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/xdr_alert_without_name"
+                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -901,12 +955,12 @@
                         }
                     }
                 },
-                "description": "Update xdr_alert item",
+                "description": "Update unified_xdr_alerts item",
                 "requestBody": {
                     "content": {
                         "application/x-www-form-urlencoded": {
                             "schema": {
-                                "$ref": "#/components/schemas/xdr_alert_without_name"
+                                "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                             }
                         }
                     },
@@ -917,7 +971,7 @@
             "delete": {
                 "responses": {
                     "200": {
-                        "description": "Delete xdr_alert item",
+                        "description": "Delete unified_xdr_alerts item",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -932,7 +986,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/xdr_alert_without_name"
+                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -943,7 +997,7 @@
                         }
                     }
                 },
-                "description": "Delete xdr_alert item",
+                "description": "Delete unified_xdr_alerts item",
                 "deprecated": false
             },
             "parameters": [

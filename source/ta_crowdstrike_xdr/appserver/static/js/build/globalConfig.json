@@ -14,6 +14,10 @@
                             {
                                 "label": "Name",
                                 "field": "name"
+                            },
+                            {
+                                "label": "Client ID",
+                                "field": "username"
                             }
                         ]
                     },
@@ -39,18 +43,32 @@
                             "required": true
                         },
                         {
+                            "field": "username",
+                            "label": "Client ID",
                             "type": "text",
-                            "label": "API key",
-                            "field": "api_key",
-                            "help": "API key",
                             "required": true,
+                            "help": "Enter the ClientID for this account.",
+                            "validators": [
+                                {
+                                    "type": "regex",
+                                    "pattern": "^\\d{32}$",
+                                    "errorMsg": "Length of ClientID should be 32 characters."
+                                }
+                            ]
+                        },
+                        {
+                            "field": "api_key",
+                            "label": "Secret",
+                            "type": "text",
                             "encrypted": true,
+                            "required": true,
+                            "help": "Enter the Secret for this account.",
                             "validators": [
                                 {
                                     "type": "string",
-                                    "errorMsg": "Length of API key should be between 1 and 50",
-                                    "minLength": 1,
-                                    "maxLength": 50
+                                    "minLength": 40,
+                                    "maxLength": 40,
+                                    "errorMsg": "Length of the Secret should be 40 characters."
                                 }
                             ]
                         }
@@ -68,24 +86,12 @@
                                 "disableSearch": true,
                                 "autoCompleteFields": [
                                     {
-                                        "value": "DEBUG",
-                                        "label": "DEBUG"
-                                    },
-                                    {
                                         "value": "INFO",
                                         "label": "INFO"
                                     },
                                     {
-                                        "value": "WARNING",
-                                        "label": "WARNING"
-                                    },
-                                    {
                                         "value": "ERROR",
                                         "label": "ERROR"
-                                    },
-                                    {
-                                        "value": "CRITICAL",
-                                        "label": "CRITICAL"
                                     }
                                 ]
                             },
@@ -95,8 +101,8 @@
                             "validators": [
                                 {
                                     "type": "regex",
-                                    "errorMsg": "Log level must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL",
-                                    "pattern": "^DEBUG|INFO|WARNING|ERROR|CRITICAL$"
+                                    "errorMsg": "Log level must be INFO or ERROR.",
+                                    "pattern": "^INFO|ERROR$"
                                 }
                             ]
                         }
@@ -158,7 +164,7 @@
                             "type": "singleSelect",
                             "field": "index",
                             "label": "Index",
-                            "defaultValue": "default",
+                            "defaultValue": "main",
                             "options": {
                                 "endpointUrl": "data/indexes?search=isInternal=0+disabled=0",
                                 "denyList": "^_.*$",
@@ -195,13 +201,41 @@
                                     "maxLength": 100
                                 }
                             ]
+                        },
+                        {
+                            "field": "cloud",
+                            "label": "Select Cloud Environment",
+                            "help": "Select the appropriate cloud environment",
+                            "required": true,
+                            "type": "singleSelect",
+                            "options": {
+                                "disableSearch": true,
+                                "autoCompleteFields": [
+                                    {
+                                        "value": "us_commercial",
+                                        "label": "US Commercial"
+                                    },
+                                    {
+                                        "value": "us_commercial2",
+                                        "label": "US Commercial 2"
+                                    },
+                                    {
+                                        "value": "govcloud",
+                                        "label": "US GovCloud"
+                                    },
+                                    {
+                                        "value": "eucloud",
+                                        "label": "EU Cloud"
+                                    }
+                                ]
+                            }
                         }
                     ],
                     "inputHelperModule": "policy_check_helper",
-                    "title": "policy_check"
+                    "title": "Policy Check"
                 },
                 {
-                    "name": "xdr_alert",
+                    "name": "unified_xdr_alerts",
                     "entity": [
                         {
                             "type": "text",
@@ -287,59 +321,99 @@
                                     "maxLength": 100
                                 }
                             ]
+                        },
+                        {
+                            "field": "cloud",
+                            "label": "Select Cloud Environment",
+                            "help": "Select the appropriate cloud environment",
+                            "required": true,
+                            "type": "singleSelect",
+                            "options": {
+                                "disableSearch": true,
+                                "autoCompleteFields": [
+                                    {
+                                        "value": "us_commercial",
+                                        "label": "US Commercial"
+                                    },
+                                    {
+                                        "value": "us_commercial2",
+                                        "label": "US Commercial 2"
+                                    },
+                                    {
+                                        "value": "govcloud",
+                                        "label": "US GovCloud"
+                                    },
+                                    {
+                                        "value": "eucloud",
+                                        "label": "EU Cloud"
+                                    }
+                                ]
+                            }
                         }
                     ],
                     "inputHelperModule": "xdr_alert_helper",
-                    "title": "xdr_alert"
+                    "title": "Unified XDR Alerts"
                 }
             ],
             "title": "Inputs",
             "description": "Manage your data inputs",
             "table": {
-                "actions": [
-                    "edit",
-                    "delete",
-                    "clone"
-                ],
                 "header": [
                     {
-                        "label": "Name",
-                        "field": "name"
+                        "field": "name",
+                        "label": "Name"
                     },
                     {
-                        "label": "Interval",
-                        "field": "interval"
+                        "field": "interval",
+                        "label": "Interval"
                     },
                     {
-                        "label": "Index",
-                        "field": "index"
+                        "field": "index",
+                        "label": "Index"
                     },
                     {
-                        "label": "Status",
-                        "field": "disabled"
+                        "field": "disabled",
+                        "label": "Status"
+                    },
+                    {
+                        "field": "account",
+                        "label": "API Credential"
+                    },
+                    {
+                        "field": "baseurl",
+                        "label": "Cloud Environment"
                     }
                 ],
                 "moreInfo": [
                     {
-                        "label": "Name",
-                        "field": "name"
+                        "field": "name",
+                        "label": "Name"
                     },
                     {
-                        "label": "Interval",
-                        "field": "interval"
+                        "field": "interval",
+                        "label": "Interval"
                     },
                     {
-                        "label": "Index",
-                        "field": "index"
+                        "field": "index",
+                        "label": "Index"
                     },
                     {
-                        "label": "Status",
                         "field": "disabled",
-                        "mapping": {
-                            "true": "Inactive",
-                            "false": "Active"
-                        }
+                        "label": "Status"
+                    },
+                    {
+                        "field": "account",
+                        "label": "API Credential"
+                    },
+                    {
+                        "field": "baseurl",
+                        "label": "Cloud Environment"
                     }
+                ],
+                "actions": [
+                    "edit",
+                    "delete",
+                    "clone"
                 ]
             }
         },
@@ -354,7 +428,7 @@
     "meta": {
         "name": "ta_crowdstrike_xdr",
         "restRoot": "ta_crowdstrike_xdr",
-        "version": "0.0.1",
+        "version": "1.0.5",
         "displayName": "Crowdstrike XDR & Health Add-on for Splunk",
         "schemaVersion": "0.0.9",
         "supportedThemes": [

@@ -35,13 +35,19 @@ special_fields = [
 
 fields = [
     field.RestField(
+        'username',
+        required=True,
+        encrypted=False,
+        default=None,
+        validator=None,
+        )
+    ), 
+    field.RestField(
         'api_key',
         required=True,
         encrypted=True,
         default=None,
-        validator=validator.String(
-            max_len=50, 
-            min_len=1, 
+        validator=None,
         )
     )
 ]

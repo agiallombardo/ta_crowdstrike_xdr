@@ -6,13 +6,13 @@ from splunklib import modularinput as smi
 from xdr_alert_helper import stream_events, validate_input
 
 
-class XDR_ALERT(smi.Script):
+class UNIFIED_XDR_ALERTS(smi.Script):
     def __init__(self):
-        super(XDR_ALERT, self).__init__()
+        super(UNIFIED_XDR_ALERTS, self).__init__()
 
     def get_scheme(self):
-        scheme = smi.Scheme('xdr_alert')
-        scheme.description = 'xdr_alert'
+        scheme = smi.Scheme('unified_xdr_alerts')
+        scheme.description = 'Unified XDR Alerts'
         scheme.use_external_validation = True
         scheme.streaming_mode_xml = True
         scheme.use_single_instance = False
@@ -28,8 +28,12 @@ class XDR_ALERT(smi.Script):
         scheme.add_argument(
             smi.Argument(
                 'account',
-                title='Account',
-                description='CrowdStrike account to use',
+                required_on_create=True,
+            )
+        )
+        scheme.add_argument(
+            smi.Argument(
+                'cloud',
                 required_on_create=True,
             )
         )
@@ -43,5 +47,5 @@ class XDR_ALERT(smi.Script):
 
 
 if __name__ == '__main__':
-    exit_code = XDR_ALERT().run(sys.argv)
+    exit_code = UNIFIED_XDR_ALERTS().run(sys.argv)
     sys.exit(exit_code)

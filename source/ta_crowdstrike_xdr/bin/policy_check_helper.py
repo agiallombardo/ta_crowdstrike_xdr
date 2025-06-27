@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import sys
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -19,6 +20,44 @@ except ImportError:
 
 ADDON_NAME = "ta_crowdstrike_xdr"
 CHECKPOINTER_NAME = "ta_crowdstrike_xdr_checkpoints"
+
+
+def get_log_level(session_key: str) -> int:
+    """Get the log level from the add-on settings.
+    
+    Args:
+        session_key: Splunk session key
+        
+    Returns:
+        The log level as an integer (logging.INFO, logging.DEBUG, etc.)
+    """
+    try:
+        # Get the settings configuration
+        settings_cfm = conf_manager.ConfManager(
+            session_key,
+            ADDON_NAME,
+            realm="__REST_CREDENTIAL__#{}#configs/conf-ta_crowdstrike_xdr_settings".format(ADDON_NAME)
+        )
+        
+        # Get the logging stanza
+        settings_conf = settings_cfm.get_conf("ta_crowdstrike_xdr_settings")
+        log_level_str = settings_conf.get("logging", {}).get("loglevel", "INFO")
+        
+        # Convert string log level to logging constant
+        log_levels = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "ERROR": logging.ERROR,
+            "CRITICAL": logging.CRITICAL
+        }
+        
+        return log_levels.get(log_level_str.upper(), logging.INFO)
+        
+    except Exception:
+        # Default to INFO if we can't get the setting
+        return logging.INFO
+
 
 def logger_for_input(session_key: str, input_name: str) -> logging.Logger:
     """Set up a logger instance for the input.
@@ -46,14 +85,33 @@ def logger_for_input(session_key: str, input_name: str) -> logging.Logger:
     return logger
 
 
-def get_account_api_key(session_key: str, account_name: str):
-    cfm = conf_manager.ConfManager(
-        session_key,
-        ADDON_NAME,
-        realm=f"__REST_CREDENTIAL__#{ADDON_NAME}#configs/conf-ta_crowdstrike_xdr_account",
-    )
-    account_conf_file = cfm.get_conf("ta_crowdstrike_xdr_account")
-    return account_conf_file.get(account_name).get("api_key")
+def get_account_credentials(session_key: str, account_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Get account credentials from configuration.
+    
+    Args:
+        session_key: Splunk session key
+        account_name: Name of the account
+        
+    Returns:
+        Tuple of (client_id, client_secret)
+    """
+    try:
+        cfm = conf_manager.ConfManager(
+            session_key,
+            ADDON_NAME,
+            realm=f"__REST_CREDENTIAL__#{ADDON_NAME}#configs/conf-ta_crowdstrike_xdr_account",
+        )
+        account_conf_file = cfm.get_conf("ta_crowdstrike_xdr_account")
+        account_config = account_conf_file.get(account_name)
+        
+        # Get credentials - username is Client ID, api_key is Client Secret
+        client_id = account_config.get("username")
+        client_secret = account_config.get("api_key")
+        
+        return client_id, client_secret
+        
+    except Exception:
+        return None, None
 
 
 def get_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: str) -> Tuple[bool, Optional[str]]:
@@ -108,49 +166,35 @@ def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         return False
 
 
-def get_base_url_from_settings(session_key: str, account_name: str) -> str:
+def get_base_url_from_cloud(cloud_env: str) -> str:
     """
-    Get the CrowdStrike base URL from settings or account configuration
+    Get the CrowdStrike base URL from cloud environment setting
+    
+    Args:
+        cloud_env: Cloud environment identifier
+        
+    Returns:
+        Base URL for the specified cloud environment
     """
-    try:
-        cfm = conf_manager.ConfManager(
-            session_key,
-            ADDON_NAME,
-            realm=f"__REST_CREDENTIAL__#{ADDON_NAME}#configs/conf-ta_crowdstrike_xdr_account",
-        )
-        account_conf_file = cfm.get_conf("ta_crowdstrike_xdr_account")
-        account_config = account_conf_file.get(account_name)
-        
-        # Check if base_url is configured in account
-        base_url = account_config.get("base_url")
-        if base_url:
-            return base_url
-            
-        # Check cloud environment setting
-        cloud_env = account_config.get("cloud_environment", "us_commercial")
-        
-        # Map cloud environment to base URL
-        cloud_mapping = {
-            "us_commercial": const.us_commercial_base,
-            "us_commercial2": const.us_commercial2_base,
-            "govcloud": const.govcloud_base,
-            "eucloud": const.eucloud_base
-        }
-        
-        return cloud_mapping.get(cloud_env, const.us_commercial_base)
-        
-    except Exception:
-        # Default to US Commercial if settings can't be retrieved
-        return const.us_commercial_base
+    # Map cloud environment to base URL
+    cloud_mapping = {
+        "us_commercial": const.us_commercial_base,
+        "us_commercial2": const.us_commercial2_base,
+        "govcloud": const.govcloud_base,
+        "eucloud": const.eucloud_base
+    }
+    
+    return cloud_mapping.get(cloud_env, const.us_commercial_base)
 
 
-def get_prevention_policies_data(logger: logging.Logger, api_key: str, base_url: str = None) -> List[Dict[str, Any]]:
+def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_secret: str, base_url: str = None) -> List[Dict[str, Any]]:
     """
     Get CrowdStrike prevention policies data using the 2-step process
     
     Args:
         logger: Logger instance
-        api_key: CrowdStrike API key in format 'client_id:client_secret'
+        client_id: CrowdStrike Client ID
+        client_secret: CrowdStrike Client Secret
         base_url: CrowdStrike base URL (optional, defaults to US Commercial)
         
     Returns:
@@ -171,17 +215,15 @@ def get_prevention_policies_data(logger: logging.Logger, api_key: str, base_url:
         
     logger.info(f"Retrieving CrowdStrike prevention policies from: {base_url}")
     
-    # Parse API key (assuming format: client_id:client_secret)
-    if ':' not in api_key:
-        logger.error("Invalid API key format. Expected 'client_id:client_secret'")
+    # Validate credentials
+    if not client_id or not client_secret:
+        logger.error("Missing CrowdStrike credentials")
         return [{
             "timestamp": time.time(),
             "status": "critical",
-            "message": "Invalid API key format",
-            "error_details": {"error": "Expected 'client_id:client_secret' format"}
+            "message": "Missing CrowdStrike credentials",
+            "error_details": {"error": "Client ID and Client Secret are required"}
         }]
-    
-    client_id, client_secret = api_key.split(':', 1)
     
     try:
         # Initialize the Prevention Policy API client
@@ -366,11 +408,10 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
     """
     for input_name, input_item in inputs.inputs.items():
         normalized_input_name = input_name.split("/")[-1]
-        logger = logger_for_input(normalized_input_name)
+        session_key = inputs.metadata["session_key"]
+        logger = logger_for_input(session_key, normalized_input_name)
         
         try:
-            session_key = inputs.metadata["session_key"]
-            
             # Configure logging
             log_level = conf_manager.get_log_level(
                 logger=logger,
@@ -387,13 +428,21 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 logger.error("No account specified in input configuration")
                 continue
                 
-            api_key = get_account_api_key(session_key, account_name)
-            if not api_key:
-                logger.error(f"No API key found for account: {account_name}")
+            # Get cloud environment from input configuration
+            cloud_env = input_item.get("cloud")
+            if not cloud_env:
+                logger.error("No cloud environment specified in input configuration")
                 continue
                 
-            base_url = get_base_url_from_settings(session_key, account_name)
-            logger.info(f"Using CrowdStrike base URL: {base_url}")
+            # Get credentials from account configuration
+            client_id, client_secret = get_account_credentials(session_key, account_name)
+            if not client_id or not client_secret:
+                logger.error(f"No credentials found for account: {account_name}")
+                continue
+                
+            # Get base URL from cloud environment
+            base_url = get_base_url_from_cloud(cloud_env)
+            logger.info(f"Using CrowdStrike base URL: {base_url} (cloud: {cloud_env})")
             
             # Handle checkpointing
             checkpoint_name = f"{account_name}-{normalized_input_name}-last_runtime".replace("://", "_")
@@ -410,7 +459,8 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             logger.info("Starting CrowdStrike prevention policy collection")
             policy_events = get_prevention_policies_data(
                 logger=logger,
-                api_key=api_key,
+                client_id=client_id,
+                client_secret=client_secret,
                 base_url=base_url
             )
             

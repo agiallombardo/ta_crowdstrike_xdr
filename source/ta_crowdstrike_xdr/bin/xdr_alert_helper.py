@@ -166,9 +166,30 @@ def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         return False
 
 
+def get_base_url_from_cloud(cloud_env: str) -> str:
+    """
+    Get the CrowdStrike base URL from cloud environment setting
+    
+    Args:
+        cloud_env: Cloud environment identifier
+        
+    Returns:
+        Base URL for the specified cloud environment
+    """
+    # Map cloud environment to base URL
+    cloud_mapping = {
+        "us_commercial": const.us_commercial_base,
+        "us_commercial2": const.us_commercial2_base,
+        "govcloud": const.govcloud_base,
+        "eucloud": const.eucloud_base
+    }
+    
+    return cloud_mapping.get(cloud_env, const.us_commercial_base)
+
+
 def get_base_url_from_settings(session_key: str, account_name: str) -> str:
     """
-    Get the CrowdStrike base URL from settings or account configuration
+    Get the CrowdStrike base URL from settings or account configuration (legacy function)
     """
     try:
         cfm = conf_manager.ConfManager(
@@ -386,13 +407,20 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 logger.error("No account specified in input configuration")
                 continue
                 
+            # Get cloud environment from input configuration
+            cloud_env = input_item.get("cloud")
+            if not cloud_env:
+                logger.error("No cloud environment specified in input configuration")
+                continue
+                
             client_id, client_secret = get_account_credentials(session_key, account_name)
             if not client_id or not client_secret:
                 logger.error(f"No credentials found for account: {account_name}")
                 continue
                 
-            base_url = get_base_url_from_settings(session_key, account_name)
-            logger.info(f"Using CrowdStrike base URL: {base_url}")
+            # Get base URL from cloud environment
+            base_url = get_base_url_from_cloud(cloud_env)
+            logger.info(f"Using CrowdStrike base URL: {base_url} (cloud: {cloud_env})")
             
             # Handle checkpointing
             checkpoint_name = f"{account_name}-{normalized_input_name}-alerts".replace("://", "_")

@@ -31,6 +31,12 @@ class POLICY_CHECK(smi.Script):
                 required_on_create=True,
             )
         )
+        scheme.add_argument(
+            smi.Argument(
+                'cloud',
+                required_on_create=True,
+            )
+        )
         return scheme
 
     def validate_input(self, definition: smi.ValidationDefinition):
