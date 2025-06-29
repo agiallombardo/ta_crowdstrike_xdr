@@ -466,10 +466,10 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             logger.debug(f"Token status: {falcon.token_status}, Token valid: {falcon.token_valid}")
             
             # Step 1: Query alert IDs using V2 API
-            logger.info("Step 1: Querying alert IDs using QueryAlertsV2")
+            logger.info("Step 1: Querying alert IDs using GetQueriesAlertsV2")
             log_api_operation_start(
                 logger=logger,
-                api_endpoint="QueryAlertsV2",
+                api_endpoint="GetQueriesAlertsV2",
                 operation="Query alert IDs with time filter",
                 base_url=base_url,
                 client_id_length=len(client_id) if client_id else 0,
@@ -485,7 +485,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             
             # Use the command method with the Uber Class
             alert_id_response = falcon.command(
-                action="QueryAlertsV2",
+                action="GetQueriesAlertsV2",
                 limit=limit,
                 filter=time_filter,
                 sort=sort
@@ -508,7 +508,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                     log_label = "Alert ID Query"
                     error_event = StatusCodeErrors.handle_status_code_errors(
                         response=alert_id_response,
-                        api_endpoint="QueryAlertsV2",
+                        api_endpoint="GetQueriesAlertsV2",
                         log_label=log_label,
                         logger=logger
                     )
@@ -528,7 +528,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                 log_label = "Alert ID Query"
                 error_event = StatusCodeErrors.handle_status_code_errors(
                     response=alert_id_response,
-                    api_endpoint="QueryAlertsV2",
+                    api_endpoint="GetQueriesAlertsV2",
                     log_label=log_label,
                     logger=logger
                 )
@@ -548,7 +548,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             logger.info(f"Step 1 completed: Found {len(alert_ids)} alert IDs")
             log_api_operation_success(
                 logger=logger,
-                api_endpoint="QueryAlertsV2",
+                api_endpoint="GetQueriesAlertsV2",
                 operation="Query alert IDs with time filter",
                 result_count=len(alert_ids),
                 time_filter=time_filter
@@ -584,7 +584,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                 logger.debug(f"Processing batch {i//batch_size + 1}: {len(batch_ids)} alerts")
                 
                 alert_details_response = falcon.command(
-                    action="GetAlertsV2",
+                    action="PostEntitiesAlertsV2",
                     ids=batch_ids
                 )
                 
@@ -628,7 +628,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             logger.info(f"Step 2 completed: Retrieved detailed information for {len(all_alerts)} alerts")
             log_api_operation_success(
                 logger=logger,
-                api_endpoint="GetAlertsV2",
+                api_endpoint="PostEntitiesAlertsV2",
                 operation="Get detailed alert information",
                 result_count=len(all_alerts),
                 time_filter=time_filter

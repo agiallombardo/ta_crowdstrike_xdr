@@ -445,7 +445,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             logger.info("Step 1: Querying all prevention policy IDs")
             log_api_operation_start(
                 logger=logger,
-                api_endpoint="QueryCombinedPolicies",
+                api_endpoint="queryCombinedPreventionPolicies",
                 operation="Query all prevention policy IDs",
                 base_url=base_url,
                 client_id_length=len(client_id) if client_id else 0,
@@ -453,7 +453,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             )
             
             policy_response = falcon.command(
-                action="QueryCombinedPolicies",
+                action="queryCombinedPreventionPolicies",
                 filter="platform_name:'Windows'+platform_name:'Mac'+platform_name:'Linux'"
             )
             
@@ -472,7 +472,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                     log_label = "Prevention Policy Query (Page 1)"
                     error_event = StatusCodeErrors.handle_status_code_errors(
                         response=policy_response,
-                        api_endpoint="QueryCombinedPolicies",
+                        api_endpoint="queryCombinedPreventionPolicies",
                         log_label=log_label,
                         logger=logger
                     )
@@ -484,7 +484,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                 log_label = "Prevention Policy Query (Page 1)"
                 error_event = StatusCodeErrors.handle_status_code_errors(
                     response=policy_response,
-                    api_endpoint="QueryCombinedPolicies",
+                    api_endpoint="queryCombinedPreventionPolicies",
                     log_label=log_label,
                     logger=logger
                 )
@@ -494,7 +494,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             logger.info(f"Step 1 completed: Found {len(policies)} prevention policies")
             log_api_operation_success(
                 logger=logger,
-                api_endpoint="QueryCombinedPolicies",
+                api_endpoint="queryCombinedPreventionPolicies",
                 operation="Query all prevention policy IDs",
                 result_count=len(policies),
                 time_filter="N/A"
