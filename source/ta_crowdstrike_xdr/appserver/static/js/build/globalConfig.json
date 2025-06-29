@@ -47,14 +47,7 @@
                             "label": "Client ID",
                             "type": "text",
                             "required": true,
-                            "help": "Enter the ClientID for this account.",
-                            "validators": [
-                                {
-                                    "type": "regex",
-                                    "pattern": "^\\d{32}$",
-                                    "errorMsg": "Length of ClientID should be 32 characters."
-                                }
-                            ]
+                            "help": "Enter the ClientID for this account."
                         },
                         {
                             "field": "api_key",
@@ -62,15 +55,7 @@
                             "type": "text",
                             "encrypted": true,
                             "required": true,
-                            "help": "Enter the Secret for this account.",
-                            "validators": [
-                                {
-                                    "type": "string",
-                                    "minLength": 40,
-                                    "maxLength": 40,
-                                    "errorMsg": "Length of the Secret should be 40 characters."
-                                }
-                            ]
+                            "help": "Enter the Secret for this account."
                         }
                     ],
                     "title": "Accounts"

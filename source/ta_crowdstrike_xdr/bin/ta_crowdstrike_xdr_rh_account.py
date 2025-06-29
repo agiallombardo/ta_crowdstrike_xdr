@@ -40,7 +40,6 @@ fields = [
         encrypted=False,
         default=None,
         validator=None,
-        )
     ), 
     field.RestField(
         'api_key',
@@ -48,7 +47,6 @@ fields = [
         encrypted=True,
         default=None,
         validator=None,
-        )
     )
 ]
 model = RestModel(fields, name=None, special_fields=special_fields)

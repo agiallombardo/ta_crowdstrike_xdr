@@ -22,6 +22,168 @@ ADDON_NAME = "ta_crowdstrike_xdr"
 CHECKPOINTER_NAME = "ta_crowdstrike_xdr_checkpoints"
 
 
+class StatusCodeErrors:
+    """Enhanced status code error handling for CrowdStrike API responses"""
+    
+    @staticmethod
+    def handle_status_code_errors(response: Dict[str, Any], api_endpoint: str, log_label: str, logger: logging.Logger) -> Dict[str, Any]:
+        """
+        Handle status code errors from CrowdStrike API responses with enhanced logging
+        
+        Args:
+            response: API response dictionary
+            api_endpoint: Name of the API endpoint that was called
+            log_label: Label for logging context
+            logger: Logger instance
+            
+        Returns:
+            Dictionary containing error event data for Splunk
+        """
+        status_code = response.get('status_code')
+        logger.info(f"{log_label}: Response code from the {api_endpoint} = {status_code}")
+        
+        # Initialize error event structure
+        error_event = {
+            "timestamp": time.time(),
+            "status": "critical",
+            "api_endpoint": api_endpoint,
+            "error_details": {
+                "status_code": status_code,
+                "log_label": log_label
+            }
+        }
+        
+        status_code_str = str(status_code)
+        
+        try:
+            if status_code_str.startswith('40'):
+                # 4xx Client Errors (Authentication, Authorization, Bad Request, etc.)
+                cs_traceid = None
+                cs_error_msg = "Unknown client error"
+                
+                # Try to extract trace ID from body meta
+                if 'body' in response and isinstance(response['body'], dict):
+                    meta = response['body'].get('meta', {})
+                    if isinstance(meta, dict):
+                        cs_traceid = meta.get('trace_id')
+                    
+                    # Extract error message
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                # Log the error details
+                if cs_traceid:
+                    logger.error(f"{log_label}: Error contacting the CrowdStrike API, please provide this TraceID to CrowdStrike support = {cs_traceid}")
+                    error_event["error_details"]["trace_id"] = cs_traceid
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API client error (4xx): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "client_error"
+                
+            elif status_code_str.startswith('50'):
+                # 5xx Server Errors
+                cs_error_msg = "Unknown server error"
+                
+                # Extract error message from response body
+                if 'body' in response and isinstance(response['body'], dict):
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API server error (5xx): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "server_error"
+                
+            else:
+                # Other status codes (3xx, etc.)
+                cs_traceid = None
+                cs_error_msg = "Unknown error"
+                
+                # Try to extract trace ID from headers
+                if 'headers' in response and isinstance(response['headers'], dict):
+                    cs_traceid = response['headers'].get('X-Cs-Traceid')
+                
+                # Extract error message from response body
+                if 'body' in response and isinstance(response['body'], dict):
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                # Log the error details
+                if cs_traceid:
+                    logger.error(f"{log_label}: Error contacting the CrowdStrike API, please provide this TraceID to CrowdStrike support = {cs_traceid}")
+                    error_event["error_details"]["trace_id"] = cs_traceid
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API error ({status_code}): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "other_error"
+        
+        except Exception as parse_error:
+            # If we can't parse the error response, log what we can
+            logger.error(f"{log_label}: Failed to parse error response: {parse_error}")
+            error_event["message"] = f"CrowdStrike API error ({status_code}) - failed to parse error details"
+            error_event["error_details"]["parse_error"] = str(parse_error)
+            error_event["error_details"]["raw_response"] = str(response)
+        
+        # Add full response for debugging if debug logging is enabled
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"{log_label}: Full API response: {response}")
+            error_event["error_details"]["full_response"] = response
+        
+        logger.error(f"{log_label}: API call failed, continuing with error handling")
+        
+        return error_event
+
+
+def create_api_context(api_endpoint: str, operation: str, **kwargs) -> Dict[str, Any]:
+    """
+    Create a standardized context dictionary for API operations
+    
+    Args:
+        api_endpoint: Name of the API endpoint
+        operation: Description of the operation being performed
+        **kwargs: Additional context data
+        
+    Returns:
+        Dictionary containing API context information
+    """
+    context = {
+        "api_endpoint": api_endpoint,
+        "operation": operation,
+        "timestamp": datetime.utcnow().isoformat(),
+        "addon_name": ADDON_NAME
+    }
+    
+    # Add any additional context provided
+    context.update(kwargs)
+    
+    return context
+
+
+def log_api_operation_start(logger: logging.Logger, api_endpoint: str, operation: str, **context) -> None:
+    """Log the start of an API operation with context"""
+    logger.info(f"Starting {operation} via {api_endpoint}")
+    if logger.isEnabledFor(logging.DEBUG):
+        api_context = create_api_context(api_endpoint, operation, **context)
+        logger.debug(f"API operation context: {api_context}")
+
+
+def log_api_operation_success(logger: logging.Logger, api_endpoint: str, operation: str, result_count: int = None, **context) -> None:
+    """Log successful completion of an API operation"""
+    if result_count is not None:
+        logger.info(f"Successfully completed {operation} via {api_endpoint} - {result_count} items processed")
+    else:
+        logger.info(f"Successfully completed {operation} via {api_endpoint}")
+    
+    if logger.isEnabledFor(logging.DEBUG):
+        api_context = create_api_context(api_endpoint, operation, result_count=result_count, **context)
+        logger.debug(f"API operation success context: {api_context}")
+
+
 def get_log_level(session_key: str) -> int:
     """Get the log level from the add-on settings.
     
@@ -54,8 +216,13 @@ def get_log_level(session_key: str) -> int:
         
         return log_levels.get(log_level_str.upper(), logging.INFO)
         
-    except Exception:
-        # Default to INFO if we can't get the setting
+    except Exception as e:
+        # Log the error but don't fail - default to INFO
+        try:
+            logging.getLogger(__name__).warning(f"Failed to retrieve log level from settings, using INFO: {e}")
+        except:
+            # If even basic logging fails, just continue silently
+            pass
         return logging.INFO
 
 
@@ -104,13 +271,20 @@ def get_account_credentials(session_key: str, account_name: str) -> Tuple[Option
         account_conf_file = cfm.get_conf("ta_crowdstrike_xdr_account")
         account_config = account_conf_file.get(account_name)
         
+        if not account_config:
+            return None, None
+            
         # Get credentials - username is Client ID, api_key is Client Secret
         client_id = account_config.get("username")
         client_secret = account_config.get("api_key")
         
         return client_id, client_secret
         
-    except Exception:
+    except Exception as e:
+        # Log the specific error for debugging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error retrieving credentials for account '{account_name}': {e}")
+        logger.debug(f"Full exception details: {e}", exc_info=True)
         return None, None
 
 
@@ -225,15 +399,30 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             "error_details": {"error": "Client ID and Client Secret are required"}
         }]
     
+    # Log credential validation for debugging (without exposing values)
+    logger.debug(f"Validating credentials - Client ID length: {len(client_id)}, "
+                f"Client Secret length: {len(client_secret)}, Base URL: {base_url}")
+    
     try:
         # Initialize the Prevention Policy API client
+        logger.debug(f"Initializing CrowdStrike PreventionPolicy client with base_url: {base_url}")
         falcon = PreventionPolicy(
             client_id=client_id,
             client_secret=client_secret,
             base_url=base_url
         )
         
+        # Log successful client initialization
+        logger.debug("PreventionPolicy client initialized successfully")
+        
         logger.info("Step 1: Querying all prevention policy IDs")
+        log_api_operation_start(
+            logger=logger,
+            api_endpoint="query_combined_policies",
+            operation="Query all prevention policy IDs",
+            base_url=base_url,
+            client_id_length=len(client_id) if client_id else 0
+        )
         
         # Step 1: Query all policy IDs (with pagination)
         policy_ids = []
@@ -251,14 +440,30 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             result = falcon.query_combined_policies(parameters=params)
             
             if result.get("status_code") not in [200, 201]:
-                logger.error(f"Failed to query policy IDs: {result}")
-                return [{
-                    "timestamp": time.time(),
-                    "status": "critical", 
-                    "message": f"Failed to query prevention policy IDs: HTTP {result.get('status_code')}",
-                    "api_endpoint": "query_combined_policies",
-                    "error_details": {"status_code": result.get("status_code"), "response": result}
-                }]
+                # Use enhanced error handling
+                log_label = f"Prevention Policy Query (Page {page_count})"
+                error_event = StatusCodeErrors.handle_status_code_errors(
+                    response=result,
+                    api_endpoint="query_combined_policies",
+                    log_label=log_label,
+                    logger=logger
+                )
+                
+                # Add additional context for authentication errors
+                if result.get("status_code") == 401:
+                    error_event["error_details"]["authentication_error"] = True
+                    error_event["error_details"]["base_url"] = base_url
+                    error_event["error_details"]["client_id_length"] = len(client_id) if client_id else 0
+                    error_event["error_details"]["client_secret_length"] = len(client_secret) if client_secret else 0
+                
+                # Add pagination context
+                error_event["error_details"]["pagination_context"] = {
+                    "page_count": page_count,
+                    "offset": offset,
+                    "total_policies_found_so_far": len(policy_ids)
+                }
+                
+                return [error_event]
             
             if "resources" in result and result["resources"]:
                 new_ids = [r["id"] for r in result["resources"]]
@@ -272,6 +477,13 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             offset = pagination["nextOffset"]
         
         logger.info(f"Step 1 completed: Found {len(policy_ids)} total prevention policies")
+        log_api_operation_success(
+            logger=logger,
+            api_endpoint="query_combined_policies",
+            operation="Query all prevention policy IDs",
+            result_count=len(policy_ids),
+            pages_processed=page_count
+        )
         
         if not policy_ids:
             logger.warning("No prevention policies found")
@@ -283,6 +495,13 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             }]
         
         logger.info("Step 2: Fetching full policy details with settings")
+        log_api_operation_start(
+            logger=logger,
+            api_endpoint="get_policies",
+            operation="Fetch full policy details with settings",
+            total_policies=len(policy_ids),
+            expected_chunks=(len(policy_ids) + 99) // 100
+        )
         
         # Step 2: Fetch full settings for those policies (in chunks of 100)
         all_policies = []
@@ -296,15 +515,25 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             detail_result = falcon.get_policies(ids=chunk)
             
             if detail_result.get("status_code") not in [200, 201]:
-                logger.error(f"Failed to get policy details for chunk {chunk_count}: {detail_result}")
+                # Use enhanced error handling
+                log_label = f"Prevention Policy Details (Chunk {chunk_count})"
+                error_event = StatusCodeErrors.handle_status_code_errors(
+                    response=detail_result,
+                    api_endpoint="get_policies",
+                    log_label=log_label,
+                    logger=logger
+                )
+                
+                # Add chunk context
+                error_event["error_details"]["chunk_context"] = {
+                    "chunk_number": chunk_count,
+                    "chunk_size": len(chunk),
+                    "policy_ids_in_chunk": chunk,
+                    "total_chunks": (len(policy_ids) + 99) // 100  # Calculate total chunks
+                }
+                
                 # Continue with other chunks but record the error
-                all_policies.append({
-                    "timestamp": time.time(),
-                    "status": "critical",
-                    "message": f"Failed to retrieve policy details for chunk {chunk_count}",
-                    "api_endpoint": "get_policies", 
-                    "error_details": {"status_code": detail_result.get("status_code"), "chunk": chunk_count}
-                })
+                all_policies.append(error_event)
                 continue
             
             if "resources" in detail_result:
@@ -312,7 +541,16 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
                 all_policies.extend(policies_in_chunk)
                 logger.debug(f"Retrieved {len(policies_in_chunk)} policy details in chunk {chunk_count}")
         
-        logger.info(f"Step 2 completed: Retrieved details for {len([p for p in all_policies if 'name' in p])} policies")
+        successful_policy_details = len([p for p in all_policies if 'name' in p])
+        logger.info(f"Step 2 completed: Retrieved details for {successful_policy_details} policies")
+        log_api_operation_success(
+            logger=logger,
+            api_endpoint="get_policies",
+            operation="Fetch full policy details with settings",
+            result_count=successful_policy_details,
+            chunks_processed=chunk_count,
+            total_policies_requested=len(policy_ids)
+        )
         
         # Convert policies to Splunk events
         policy_events = []
@@ -413,12 +651,7 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
         
         try:
             # Configure logging
-            log_level = conf_manager.get_log_level(
-                logger=logger,
-                session_key=session_key,
-                app_name=ADDON_NAME,
-                conf_name="ta_crowdstrike_xdr_settings",
-            )
+            log_level = get_log_level(session_key)
             logger.setLevel(log_level)
             log.modular_input_start(logger, normalized_input_name)
             
@@ -435,9 +668,21 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 continue
                 
             # Get credentials from account configuration
+            logger.debug(f"Retrieving credentials for account: {account_name}")
             client_id, client_secret = get_account_credentials(session_key, account_name)
             if not client_id or not client_secret:
-                logger.error(f"No credentials found for account: {account_name}")
+                logger.error(f"No credentials found for account: {account_name}. "
+                           f"Client ID present: {bool(client_id)}, Client Secret present: {bool(client_secret)}")
+                logger.debug(f"Session key length: {len(session_key) if session_key else 0}")
+                continue
+            
+            # Log credential validation (without exposing actual values)
+            logger.debug(f"Credentials retrieved - Client ID length: {len(client_id)}, "
+                        f"Client Secret length: {len(client_secret)}")
+            
+            # Basic validation of credential format
+            if not client_id.strip() or not client_secret.strip():
+                logger.error(f"Invalid credentials for account {account_name}: credentials contain only whitespace")
                 continue
                 
             # Get base URL from cloud environment
@@ -457,12 +702,18 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             # Get prevention policies data using the 2-step process
             logger.info("Starting CrowdStrike prevention policy collection")
+            logger.info(f"Collection parameters - Account: {account_name}, Cloud: {cloud_env}, Base URL: {base_url}")
+            
+            collection_start_time = time.time()
             policy_events = get_prevention_policies_data(
                 logger=logger,
                 client_id=client_id,
                 client_secret=client_secret,
                 base_url=base_url
             )
+            collection_duration = time.time() - collection_start_time
+            
+            logger.info(f"Prevention policy collection completed in {collection_duration:.2f} seconds")
             
             if not policy_events:
                 logger.warning("No prevention policy events generated")
@@ -488,8 +739,20 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             try:
                 logger.info(f"Sending {len(policy_events)} prevention policy events to Splunk")
+                logger.debug(f"Event destination - Index: {index}, Sourcetype: {sourcetype}")
+                
+                # Count different event types for logging
+                event_types = {}
+                for event in policy_events:
+                    event_status = event.get("status", "unknown")
+                    event_types[event_status] = event_types.get(event_status, 0) + 1
+                
+                logger.info(f"Event breakdown: {dict(event_types)}")
+                
+                send_start_time = time.time()
                 
                 # Send events individually to maintain proper event boundaries
+                events_sent = 0
                 for event in policy_events:
                     event_writer.write_event(
                         smi.Event(
@@ -498,8 +761,14 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                             sourcetype=sourcetype,
                         )
                     )
+                    events_sent += 1
+                    
+                    # Log progress for large batches
+                    if events_sent % 50 == 0:
+                        logger.debug(f"Sent {events_sent}/{len(policy_events)} events to Splunk")
                 
-                logger.info(f"Successfully sent {len(policy_events)} prevention policy events to Splunk")
+                send_duration = time.time() - send_start_time
+                logger.info(f"Successfully sent {len(policy_events)} prevention policy events to Splunk in {send_duration:.2f} seconds")
                 
                 # Update checkpoint after successful event processing
                 if set_checkpoint(logger, session_key, checkpoint_name, current_run_time):
@@ -544,6 +813,17 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
         except Exception as e:
             logger.error(f"Exception in prevention policy collection for {normalized_input_name}: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.debug(f"Full exception details for {normalized_input_name}: {e}", exc_info=True)
+            
+            # Log additional context if available
+            try:
+                logger.error(f"Exception context - Account: {account_name if 'account_name' in locals() else 'Unknown'}, "
+                           f"Cloud: {cloud_env if 'cloud_env' in locals() else 'Unknown'}, "
+                           f"Base URL: {base_url if 'base_url' in locals() else 'Unknown'}")
+            except:
+                pass
+            
             log.log_exception(
                 logger, 
                 e, 

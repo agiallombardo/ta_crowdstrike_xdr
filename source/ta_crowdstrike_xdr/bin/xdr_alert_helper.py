@@ -22,6 +22,168 @@ ADDON_NAME = "ta_crowdstrike_xdr"
 CHECKPOINTER_NAME = "ta_crowdstrike_xdr_checkpoints"
 
 
+class StatusCodeErrors:
+    """Enhanced status code error handling for CrowdStrike API responses"""
+    
+    @staticmethod
+    def handle_status_code_errors(response: Dict[str, Any], api_endpoint: str, log_label: str, logger: logging.Logger) -> Dict[str, Any]:
+        """
+        Handle status code errors from CrowdStrike API responses with enhanced logging
+        
+        Args:
+            response: API response dictionary
+            api_endpoint: Name of the API endpoint that was called
+            log_label: Label for logging context
+            logger: Logger instance
+            
+        Returns:
+            Dictionary containing error event data for Splunk
+        """
+        status_code = response.get('status_code')
+        logger.info(f"{log_label}: Response code from the {api_endpoint} = {status_code}")
+        
+        # Initialize error event structure
+        error_event = {
+            "timestamp": time.time(),
+            "status": "critical",
+            "api_endpoint": api_endpoint,
+            "error_details": {
+                "status_code": status_code,
+                "log_label": log_label
+            }
+        }
+        
+        status_code_str = str(status_code)
+        
+        try:
+            if status_code_str.startswith('40'):
+                # 4xx Client Errors (Authentication, Authorization, Bad Request, etc.)
+                cs_traceid = None
+                cs_error_msg = "Unknown client error"
+                
+                # Try to extract trace ID from body meta
+                if 'body' in response and isinstance(response['body'], dict):
+                    meta = response['body'].get('meta', {})
+                    if isinstance(meta, dict):
+                        cs_traceid = meta.get('trace_id')
+                    
+                    # Extract error message
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                # Log the error details
+                if cs_traceid:
+                    logger.error(f"{log_label}: Error contacting the CrowdStrike API, please provide this TraceID to CrowdStrike support = {cs_traceid}")
+                    error_event["error_details"]["trace_id"] = cs_traceid
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API client error (4xx): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "client_error"
+                
+            elif status_code_str.startswith('50'):
+                # 5xx Server Errors
+                cs_error_msg = "Unknown server error"
+                
+                # Extract error message from response body
+                if 'body' in response and isinstance(response['body'], dict):
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API server error (5xx): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "server_error"
+                
+            else:
+                # Other status codes (3xx, etc.)
+                cs_traceid = None
+                cs_error_msg = "Unknown error"
+                
+                # Try to extract trace ID from headers
+                if 'headers' in response and isinstance(response['headers'], dict):
+                    cs_traceid = response['headers'].get('X-Cs-Traceid')
+                
+                # Extract error message from response body
+                if 'body' in response and isinstance(response['body'], dict):
+                    errors = response['body'].get('errors', [])
+                    if errors and isinstance(errors, list) and len(errors) > 0:
+                        cs_error_msg = errors[0].get('message', cs_error_msg)
+                
+                # Log the error details
+                if cs_traceid:
+                    logger.error(f"{log_label}: Error contacting the CrowdStrike API, please provide this TraceID to CrowdStrike support = {cs_traceid}")
+                    error_event["error_details"]["trace_id"] = cs_traceid
+                
+                logger.error(f"{log_label}: Error contacting the CrowdStrike API, error message = {cs_error_msg}")
+                error_event["message"] = f"CrowdStrike API error ({status_code}): {cs_error_msg}"
+                error_event["error_details"]["error_message"] = cs_error_msg
+                error_event["error_details"]["error_type"] = "other_error"
+        
+        except Exception as parse_error:
+            # If we can't parse the error response, log what we can
+            logger.error(f"{log_label}: Failed to parse error response: {parse_error}")
+            error_event["message"] = f"CrowdStrike API error ({status_code}) - failed to parse error details"
+            error_event["error_details"]["parse_error"] = str(parse_error)
+            error_event["error_details"]["raw_response"] = str(response)
+        
+        # Add full response for debugging if debug logging is enabled
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"{log_label}: Full API response: {response}")
+            error_event["error_details"]["full_response"] = response
+        
+        logger.error(f"{log_label}: API call failed, continuing with error handling")
+        
+        return error_event
+
+
+def create_api_context(api_endpoint: str, operation: str, **kwargs) -> Dict[str, Any]:
+    """
+    Create a standardized context dictionary for API operations
+    
+    Args:
+        api_endpoint: Name of the API endpoint
+        operation: Description of the operation being performed
+        **kwargs: Additional context data
+        
+    Returns:
+        Dictionary containing API context information
+    """
+    context = {
+        "api_endpoint": api_endpoint,
+        "operation": operation,
+        "timestamp": datetime.utcnow().isoformat(),
+        "addon_name": ADDON_NAME
+    }
+    
+    # Add any additional context provided
+    context.update(kwargs)
+    
+    return context
+
+
+def log_api_operation_start(logger: logging.Logger, api_endpoint: str, operation: str, **context) -> None:
+    """Log the start of an API operation with context"""
+    logger.info(f"Starting {operation} via {api_endpoint}")
+    if logger.isEnabledFor(logging.DEBUG):
+        api_context = create_api_context(api_endpoint, operation, **context)
+        logger.debug(f"API operation context: {api_context}")
+
+
+def log_api_operation_success(logger: logging.Logger, api_endpoint: str, operation: str, result_count: int = None, **context) -> None:
+    """Log successful completion of an API operation"""
+    if result_count is not None:
+        logger.info(f"Successfully completed {operation} via {api_endpoint} - {result_count} items processed")
+    else:
+        logger.info(f"Successfully completed {operation} via {api_endpoint}")
+    
+    if logger.isEnabledFor(logging.DEBUG):
+        api_context = create_api_context(api_endpoint, operation, result_count=result_count, **context)
+        logger.debug(f"API operation success context: {api_context}")
+
+
 def get_log_level(session_key: str) -> int:
     """Get the log level from the add-on settings.
     
@@ -54,8 +216,13 @@ def get_log_level(session_key: str) -> int:
         
         return log_levels.get(log_level_str.upper(), logging.INFO)
         
-    except Exception:
-        # Default to INFO if we can't get the setting
+    except Exception as e:
+        # Log the error but don't fail - default to INFO
+        try:
+            logging.getLogger(__name__).warning(f"Failed to retrieve log level from settings, using INFO: {e}")
+        except:
+            # If even basic logging fails, just continue silently
+            pass
         return logging.INFO
 
 
@@ -104,13 +271,20 @@ def get_account_credentials(session_key: str, account_name: str) -> Tuple[Option
         account_conf_file = cfm.get_conf("ta_crowdstrike_xdr_account")
         account_config = account_conf_file.get(account_name)
         
-        # Get credentials - assuming they're stored as username/password
+        if not account_config:
+            return None, None
+            
+        # Get credentials - username is Client ID, api_key is Client Secret
         client_id = account_config.get("username")
-        client_secret = account_config.get("password")
+        client_secret = account_config.get("api_key")
         
         return client_id, client_secret
         
-    except Exception:
+    except Exception as e:
+        # Log the specific error for debugging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error retrieving credentials for account '{account_name}': {e}")
+        logger.debug(f"Full exception details: {e}", exc_info=True)
         return None, None
 
 
@@ -259,12 +433,21 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
         
         # Step 1: Query alert IDs using V2 API
         logger.info("Step 1: Querying alert IDs using AlertsV2")
+        log_api_operation_start(
+            logger=logger,
+            api_endpoint="query_alerts_v2",
+            operation="Query alert IDs with time filter",
+            base_url=base_url,
+            client_id_length=len(client_id) if client_id else 0,
+            last_checkpoint=last_checkpoint
+        )
         
         limit = 10000
         sort = "updated_timestamp.asc"
         time_filter = f"updated_timestamp:>='{last_checkpoint}'"
         
         logger.debug(f"Alert filter: {time_filter}")
+        logger.debug(f"Query parameters - Limit: {limit}, Sort: {sort}")
         
         alert_id_response = falcon.query_alerts_v2(
             limit=limit, 
@@ -273,17 +456,41 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
         )
         
         if alert_id_response.get("status_code") not in [200, 201]:
-            logger.error(f"Failed to query alert IDs: {alert_id_response}")
-            return [{
-                "timestamp": time.time(),
-                "status": "critical",
-                "message": f"Failed to query alert IDs: HTTP {alert_id_response.get('status_code')}",
-                "api_endpoint": "query_alerts_v2",
-                "error_details": {"status_code": alert_id_response.get("status_code"), "response": alert_id_response}
-            }]
+            # Use enhanced error handling
+            log_label = "Alert ID Query"
+            error_event = StatusCodeErrors.handle_status_code_errors(
+                response=alert_id_response,
+                api_endpoint="query_alerts_v2",
+                log_label=log_label,
+                logger=logger
+            )
+            
+            # Add additional context for authentication errors
+            if alert_id_response.get("status_code") == 401:
+                error_event["error_details"]["authentication_error"] = True
+                error_event["error_details"]["base_url"] = base_url
+                error_event["error_details"]["client_id_length"] = len(client_id) if client_id else 0
+                error_event["error_details"]["client_secret_length"] = len(client_secret) if client_secret else 0
+            
+            # Add query context
+            error_event["error_details"]["query_context"] = {
+                "time_filter": time_filter,
+                "limit": limit,
+                "sort": sort,
+                "last_checkpoint": last_checkpoint
+            }
+            
+            return [error_event]
         
         alert_ids = alert_id_response.get("body", {}).get("resources", [])
         logger.info(f"Step 1 completed: Found {len(alert_ids)} alert IDs")
+        log_api_operation_success(
+            logger=logger,
+            api_endpoint="query_alerts_v2",
+            operation="Query alert IDs with time filter",
+            result_count=len(alert_ids),
+            time_filter=time_filter
+        )
         
         if not alert_ids:
             logger.info("No new alerts found")
@@ -296,26 +503,46 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
         
         # Step 2: Get alert details in chunks using V2 API
         logger.info("Step 2: Fetching alert details using AlertsV2")
+        log_api_operation_start(
+            logger=logger,
+            api_endpoint="get_alerts_v2",
+            operation="Fetch alert details in chunks",
+            total_alerts=len(alert_ids),
+            expected_chunks=(len(alert_ids) + 999) // 1000
+        )
         
         all_alerts = []
         details_query_limit = 1000
+        chunk_count = 0
         
         for i in range(0, len(alert_ids), details_query_limit):
+            chunk_count += 1
             chunk = alert_ids[i:i + details_query_limit]
-            logger.debug(f"Fetching details for {len(chunk)} alerts")
+            logger.debug(f"Fetching details for chunk {chunk_count} ({len(chunk)} alerts)")
             
             detail_result = falcon.get_alerts_v2(ids=chunk)
             
             if detail_result.get("status_code") not in [200, 201]:
-                logger.error(f"Failed to get alert details: {detail_result}")
+                # Use enhanced error handling
+                log_label = f"Alert Details (Chunk {chunk_count})"
+                error_event = StatusCodeErrors.handle_status_code_errors(
+                    response=detail_result,
+                    api_endpoint="get_alerts_v2",
+                    log_label=log_label,
+                    logger=logger
+                )
+                
+                # Add chunk context
+                error_event["error_details"]["chunk_context"] = {
+                    "chunk_number": chunk_count,
+                    "chunk_size": len(chunk),
+                    "alert_ids_in_chunk": chunk[:10],  # Only log first 10 IDs to avoid log bloat
+                    "total_chunks": (len(alert_ids) + 999) // 1000,
+                    "alerts_processed_so_far": len([a for a in all_alerts if 'alert_id' in a])
+                }
+                
                 # Continue with other chunks but record the error
-                all_alerts.append({
-                    "timestamp": time.time(),
-                    "status": "critical",
-                    "message": f"Failed to retrieve alert details for chunk",
-                    "api_endpoint": "get_alerts_v2",
-                    "error_details": {"status_code": detail_result.get("status_code")}
-                })
+                all_alerts.append(error_event)
                 continue
             
             if "resources" in detail_result.get("body", {}):
@@ -323,7 +550,16 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
                 all_alerts.extend(alerts_in_chunk)
                 logger.debug(f"Retrieved {len(alerts_in_chunk)} alert details")
         
-        logger.info(f"Step 2 completed: Retrieved details for {len([a for a in all_alerts if 'alert_id' in a])} alerts")
+        successful_alert_details = len([a for a in all_alerts if 'alert_id' in a])
+        logger.info(f"Step 2 completed: Retrieved details for {successful_alert_details} alerts")
+        log_api_operation_success(
+            logger=logger,
+            api_endpoint="get_alerts_v2",
+            operation="Fetch alert details in chunks",
+            result_count=successful_alert_details,
+            chunks_processed=chunk_count,
+            total_alerts_requested=len(alert_ids)
+        )
         
         # Convert alerts to Splunk events and add TA metadata
         alert_events = []
@@ -392,12 +628,7 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
         
         try:
             # Configure logging
-            log_level = conf_manager.get_log_level(
-                logger=logger,
-                session_key=session_key,
-                app_name=ADDON_NAME,
-                conf_name="ta_crowdstrike_xdr_settings",
-            )
+            log_level = get_log_level(session_key)
             logger.setLevel(log_level)
             log.modular_input_start(logger, normalized_input_name)
             
@@ -413,9 +644,21 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 logger.error("No cloud environment specified in input configuration")
                 continue
                 
+            logger.debug(f"Retrieving credentials for account: {account_name}")
             client_id, client_secret = get_account_credentials(session_key, account_name)
             if not client_id or not client_secret:
-                logger.error(f"No credentials found for account: {account_name}")
+                logger.error(f"No credentials found for account: {account_name}. "
+                           f"Client ID present: {bool(client_id)}, Client Secret present: {bool(client_secret)}")
+                logger.debug(f"Session key length: {len(session_key) if session_key else 0}")
+                continue
+            
+            # Log credential validation (without exposing actual values)
+            logger.debug(f"Credentials retrieved - Client ID length: {len(client_id)}, "
+                        f"Client Secret length: {len(client_secret)}")
+            
+            # Basic validation of credential format
+            if not client_id.strip() or not client_secret.strip():
+                logger.error(f"Invalid credentials for account {account_name}: credentials contain only whitespace")
                 continue
                 
             # Get base URL from cloud environment
@@ -435,6 +678,9 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             # Get alerts data using AlertsV2 service collection
             logger.info("Starting CrowdStrike alert collection")
+            logger.info(f"Collection parameters - Account: {account_name}, Cloud: {cloud_env}, Base URL: {base_url}")
+            
+            collection_start_time = time.time()
             alert_events = get_crowdstrike_alerts_data(
                 logger=logger,
                 client_id=client_id,
@@ -442,6 +688,9 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 base_url=base_url,
                 last_checkpoint=last_checkpoint
             )
+            collection_duration = time.time() - collection_start_time
+            
+            logger.info(f"Alert collection completed in {collection_duration:.2f} seconds")
             
             if not alert_events:
                 logger.warning("No alert events generated")
@@ -471,8 +720,25 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             try:
                 logger.info(f"Sending {len(alert_events)} alert events to Splunk")
+                logger.debug(f"Event destination - Index: {index}, Sourcetype: {sourcetype}")
+                
+                # Count different event types for logging
+                event_types = {}
+                for event in alert_events:
+                    if 'alert_id' in event:
+                        event_types['alerts'] = event_types.get('alerts', 0) + 1
+                    elif event.get('summary'):
+                        event_types['summary'] = event_types.get('summary', 0) + 1
+                    else:
+                        event_status = event.get("status", "unknown")
+                        event_types[event_status] = event_types.get(event_status, 0) + 1
+                
+                logger.info(f"Event breakdown: {dict(event_types)}")
+                
+                send_start_time = time.time()
                 
                 # Send events individually to maintain proper event boundaries
+                events_sent = 0
                 for event in alert_events:
                     event_writer.write_event(
                         smi.Event(
@@ -481,8 +747,14 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                             sourcetype=sourcetype,
                         )
                     )
+                    events_sent += 1
+                    
+                    # Log progress for large batches
+                    if events_sent % 100 == 0:
+                        logger.debug(f"Sent {events_sent}/{len(alert_events)} events to Splunk")
                 
-                logger.info(f"Successfully sent {len(alert_events)} alert events to Splunk")
+                send_duration = time.time() - send_start_time
+                logger.info(f"Successfully sent {len(alert_events)} alert events to Splunk in {send_duration:.2f} seconds")
                 
                 # Update checkpoint after successful event processing
                 if set_checkpoint(logger, session_key, checkpoint_name, latest_timestamp):
@@ -527,6 +799,17 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
         except Exception as e:
             logger.error(f"Exception in alert collection for {normalized_input_name}: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.debug(f"Full exception details for {normalized_input_name}: {e}", exc_info=True)
+            
+            # Log additional context if available
+            try:
+                logger.error(f"Exception context - Account: {account_name if 'account_name' in locals() else 'Unknown'}, "
+                           f"Cloud: {cloud_env if 'cloud_env' in locals() else 'Unknown'}, "
+                           f"Base URL: {base_url if 'base_url' in locals() else 'Unknown'}")
+            except:
+                pass
+            
             log.log_exception(
                 logger, 
                 e, 
