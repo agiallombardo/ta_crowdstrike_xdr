@@ -13,8 +13,9 @@ from splunklib import modularinput as smi
 import crowdstrike_constants as const
 
 try:
-    from falconpy import PreventionPolicy
+    from falconpy import APIHarnessV2, PreventionPolicy
 except ImportError:
+    APIHarnessV2 = None
     PreventionPolicy = None
 
 
@@ -361,9 +362,193 @@ def get_base_url_from_cloud(cloud_env: str) -> str:
     return cloud_mapping.get(cloud_env, const.us_commercial_base)
 
 
+def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, client_secret: str, 
+                                   base_url: str = None, max_retries: int = 3) -> List[Dict[str, Any]]:
+    """
+    Get CrowdStrike prevention policies data using APIHarnessV2 with enhanced authentication
+    
+    Args:
+        logger: Logger instance
+        client_id: CrowdStrike Client ID
+        client_secret: CrowdStrike Client Secret
+        base_url: CrowdStrike base URL (optional, defaults to US Commercial)
+        max_retries: Maximum number of retry attempts for authentication failures
+        
+    Returns:
+        List of prevention policy events for Splunk
+    """
+    if not APIHarnessV2:
+        return [{
+            "timestamp": time.time(),
+            "status": "critical",
+            "message": "FalconPy SDK APIHarnessV2 not available - cannot retrieve prevention policies",
+            "error_details": {"error": "Missing falconpy APIHarnessV2 dependency"}
+        }]
+    
+    # Use default base URL if not provided
+    if not base_url:
+        base_url = const.us_commercial_base
+        
+    logger.info(f"Retrieving CrowdStrike prevention policies from: {base_url} using APIHarnessV2")
+    
+    # Validate credentials
+    if not client_id or not client_secret:
+        logger.error("Missing CrowdStrike credentials")
+        return [{
+            "timestamp": time.time(),
+            "status": "critical",
+            "message": "Missing CrowdStrike credentials",
+            "error_details": {"error": "Client ID and Client Secret are required"}
+        }]
+    
+    # Retry logic for authentication failures
+    for attempt in range(max_retries):
+        try:
+            logger.debug(f"Authentication attempt {attempt + 1} of {max_retries}")
+            
+            # Initialize the APIHarnessV2 (Uber Class) with automatic token management
+            falcon = APIHarnessV2(
+                client_id=client_id,
+                client_secret=client_secret,
+                base_url=base_url,
+                debug=logger.level <= logging.DEBUG
+            )
+            
+            # Test authentication
+            logger.debug("Testing authentication...")
+            if not falcon.authenticated:
+                falcon.login()
+                
+            if not falcon.authenticated:
+                logger.error(f"Authentication failed on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying authentication in 5 seconds...")
+                    time.sleep(5)
+                    continue
+                else:
+                    return [{
+                        "timestamp": time.time(),
+                        "status": "critical",
+                        "message": "Authentication failed after all retry attempts",
+                        "error_details": {
+                            "error": "Authentication failure",
+                            "attempts": max_retries,
+                            "base_url": base_url,
+                            "client_id_length": len(client_id) if client_id else 0
+                        }
+                    }]
+            
+            logger.info(f"Successfully authenticated to CrowdStrike API (attempt {attempt + 1})")
+            logger.debug(f"Token status: {falcon.token_status}, Token valid: {falcon.token_valid}")
+            
+            # Step 1: Query all prevention policy IDs
+            logger.info("Step 1: Querying all prevention policy IDs")
+            log_api_operation_start(
+                logger=logger,
+                api_endpoint="QueryCombinedPolicies",
+                operation="Query all prevention policy IDs",
+                base_url=base_url,
+                client_id_length=len(client_id) if client_id else 0,
+                last_checkpoint="N/A"
+            )
+            
+            policy_response = falcon.command(
+                action="QueryCombinedPolicies",
+                filter="platform_name:'Windows'+platform_name:'Mac'+platform_name:'Linux'"
+            )
+            
+            # Check for authentication errors and retry if needed
+            if policy_response.get("status_code") == 401:
+                logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logger.info("Token may have expired, forcing re-authentication...")
+                    try:
+                        falcon.logout()
+                    except:
+                        pass
+                    time.sleep(2)
+                    continue
+                else:
+                    log_label = "Prevention Policy Query (Page 1)"
+                    error_event = StatusCodeErrors.handle_status_code_errors(
+                        response=policy_response,
+                        api_endpoint="QueryCombinedPolicies",
+                        log_label=log_label,
+                        logger=logger
+                    )
+                    error_event["error_details"]["authentication_error"] = True
+                    error_event["error_details"]["max_retries_exceeded"] = True
+                    return [error_event]
+            
+            if policy_response.get("status_code") not in [200, 201]:
+                log_label = "Prevention Policy Query (Page 1)"
+                error_event = StatusCodeErrors.handle_status_code_errors(
+                    response=policy_response,
+                    api_endpoint="QueryCombinedPolicies",
+                    log_label=log_label,
+                    logger=logger
+                )
+                return [error_event]
+            
+            policies = policy_response.get("body", {}).get("resources", [])
+            logger.info(f"Step 1 completed: Found {len(policies)} prevention policies")
+            log_api_operation_success(
+                logger=logger,
+                api_endpoint="QueryCombinedPolicies",
+                operation="Query all prevention policy IDs",
+                result_count=len(policies),
+                time_filter="N/A"
+            )
+            
+            if not policies:
+                logger.info("No prevention policies found")
+                return [{
+                    "timestamp": time.time(),
+                    "status": "info",
+                    "message": "No prevention policies found in CrowdStrike",
+                    "policy_count": 0
+                }]
+            
+            # Clean up - logout when done
+            try:
+                falcon.logout()
+                logger.debug("Successfully logged out from CrowdStrike API")
+            except Exception as e:
+                logger.debug(f"Logout warning (non-critical): {e}")
+            
+            return policies
+            
+        except Exception as e:
+            logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+            logger.debug(f"Full exception details: {e}", exc_info=True)
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying after unexpected error in 5 seconds...")
+                time.sleep(5)
+                continue
+            else:
+                return [{
+                    "timestamp": time.time(),
+                    "status": "critical",
+                    "message": f"Unexpected error after {max_retries} attempts: {str(e)}",
+                    "error_details": {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "attempts": max_retries
+                    }
+                }]
+    
+    return [{
+        "timestamp": time.time(),
+        "status": "critical",
+        "message": "Authentication retry loop completed without success",
+        "error_details": {"error": "Retry loop exhausted"}
+    }]
+
+
 def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_secret: str, base_url: str = None) -> List[Dict[str, Any]]:
     """
-    Get CrowdStrike prevention policies data using the 2-step process
+    Get CrowdStrike prevention policies data using the best available FalconPy method
     
     Args:
         logger: Logger instance
@@ -374,6 +559,14 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
     Returns:
         List of prevention policy events for Splunk
     """
+    # Try the new APIHarnessV2 method first (recommended)
+    if APIHarnessV2:
+        logger.info("Using enhanced APIHarnessV2 authentication method")
+        return get_prevention_policies_data_v2(logger, client_id, client_secret, base_url)
+    
+    # Fallback to legacy method if APIHarnessV2 is not available
+    logger.warning("APIHarnessV2 not available, falling back to legacy PreventionPolicy service class")
+    
     if PreventionPolicy is None:
         logger.error("FalconPy SDK not available. Please install falconpy package.")
         return [{
@@ -387,7 +580,7 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
     if not base_url:
         base_url = const.us_commercial_base
         
-    logger.info(f"Retrieving CrowdStrike prevention policies from: {base_url}")
+    logger.info(f"Retrieving CrowdStrike prevention policies from: {base_url} using legacy PreventionPolicy service class")
     
     # Validate credentials
     if not client_id or not client_secret:

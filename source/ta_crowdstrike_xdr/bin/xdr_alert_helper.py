@@ -13,8 +13,9 @@ from splunklib import modularinput as smi
 import crowdstrike_constants as const
 
 try:
-    from falconpy import Alerts
+    from falconpy import APIHarnessV2, Alerts
 except ImportError:
+    APIHarnessV2 = None
     Alerts = None
 
 
@@ -397,10 +398,284 @@ def get_base_url_from_settings(session_key: str, account_name: str) -> str:
         return const.us_commercial_base
 
 
+def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, client_secret: str, 
+                                  base_url: str, last_checkpoint: str, max_retries: int = 3) -> List[Dict[str, Any]]:
+    """
+    Retrieve CrowdStrike alerts data using the FalconPy APIHarnessV2 (Uber Class) with enhanced authentication
+    
+    Args:
+        logger: Logger instance
+        client_id: CrowdStrike API client ID
+        client_secret: CrowdStrike API client secret
+        base_url: CrowdStrike API base URL
+        last_checkpoint: Last checkpoint timestamp
+        max_retries: Maximum number of retry attempts for authentication failures
+        
+    Returns:
+        List of alert events or error events
+    """
+    if not APIHarnessV2:
+        return [{
+            "timestamp": time.time(),
+            "status": "critical",
+            "message": "FalconPy SDK APIHarnessV2 not available - cannot retrieve alerts",
+            "error_details": {"error": "Missing falconpy APIHarnessV2 dependency"}
+        }]
+    
+    logger.info(f"Retrieving CrowdStrike alerts from: {base_url} using APIHarnessV2")
+    
+    # Retry logic for authentication failures
+    for attempt in range(max_retries):
+        try:
+            logger.debug(f"Authentication attempt {attempt + 1} of {max_retries}")
+            
+            # Initialize the APIHarnessV2 (Uber Class) with automatic token management
+            falcon = APIHarnessV2(
+                client_id=client_id,
+                client_secret=client_secret,
+                base_url=base_url,
+                debug=logger.level <= logging.DEBUG  # Enable debug mode if logger is in debug
+            )
+            
+            # Test authentication by checking if we can authenticate
+            logger.debug("Testing authentication...")
+            if not falcon.authenticated:
+                # Force authentication
+                falcon.login()
+                
+            if not falcon.authenticated:
+                logger.error(f"Authentication failed on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying authentication in 5 seconds...")
+                    time.sleep(5)
+                    continue
+                else:
+                    return [{
+                        "timestamp": time.time(),
+                        "status": "critical",
+                        "message": "Authentication failed after all retry attempts",
+                        "error_details": {
+                            "error": "Authentication failure",
+                            "attempts": max_retries,
+                            "base_url": base_url,
+                            "client_id_length": len(client_id) if client_id else 0
+                        }
+                    }]
+            
+            logger.info(f"Successfully authenticated to CrowdStrike API (attempt {attempt + 1})")
+            logger.debug(f"Token status: {falcon.token_status}, Token valid: {falcon.token_valid}")
+            
+            # Step 1: Query alert IDs using V2 API
+            logger.info("Step 1: Querying alert IDs using QueryAlertsV2")
+            log_api_operation_start(
+                logger=logger,
+                api_endpoint="QueryAlertsV2",
+                operation="Query alert IDs with time filter",
+                base_url=base_url,
+                client_id_length=len(client_id) if client_id else 0,
+                last_checkpoint=last_checkpoint
+            )
+            
+            limit = 10000
+            sort = "updated_timestamp.asc"
+            time_filter = f"updated_timestamp:>='{last_checkpoint}'"
+            
+            logger.debug(f"Alert filter: {time_filter}")
+            logger.debug(f"Query parameters - Limit: {limit}, Sort: {sort}")
+            
+            # Use the command method with the Uber Class
+            alert_id_response = falcon.command(
+                action="QueryAlertsV2",
+                limit=limit,
+                filter=time_filter,
+                sort=sort
+            )
+            
+            # Check for authentication errors and retry if needed
+            if alert_id_response.get("status_code") == 401:
+                logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logger.info("Token may have expired, forcing re-authentication...")
+                    # Force logout and re-authentication
+                    try:
+                        falcon.logout()
+                    except:
+                        pass  # Ignore logout errors
+                    time.sleep(2)
+                    continue
+                else:
+                    # Final attempt failed
+                    log_label = "Alert ID Query"
+                    error_event = StatusCodeErrors.handle_status_code_errors(
+                        response=alert_id_response,
+                        api_endpoint="QueryAlertsV2",
+                        log_label=log_label,
+                        logger=logger
+                    )
+                    
+                    # Add additional context for authentication errors
+                    error_event["error_details"]["authentication_error"] = True
+                    error_event["error_details"]["base_url"] = base_url
+                    error_event["error_details"]["client_id_length"] = len(client_id) if client_id else 0
+                    error_event["error_details"]["max_retries_exceeded"] = True
+                    error_event["error_details"]["attempts"] = max_retries
+                    
+                    return [error_event]
+            
+            # Check for other non-success status codes
+            if alert_id_response.get("status_code") not in [200, 201]:
+                # Use enhanced error handling
+                log_label = "Alert ID Query"
+                error_event = StatusCodeErrors.handle_status_code_errors(
+                    response=alert_id_response,
+                    api_endpoint="QueryAlertsV2",
+                    log_label=log_label,
+                    logger=logger
+                )
+                
+                # Add query context
+                error_event["error_details"]["query_context"] = {
+                    "time_filter": time_filter,
+                    "limit": limit,
+                    "sort": sort,
+                    "last_checkpoint": last_checkpoint
+                }
+                
+                return [error_event]
+            
+            # Success - process the response
+            alert_ids = alert_id_response.get("body", {}).get("resources", [])
+            logger.info(f"Step 1 completed: Found {len(alert_ids)} alert IDs")
+            log_api_operation_success(
+                logger=logger,
+                api_endpoint="QueryAlertsV2",
+                operation="Query alert IDs with time filter",
+                result_count=len(alert_ids),
+                time_filter=time_filter
+            )
+            
+            if not alert_ids:
+                logger.info("No new alerts found")
+                return [{
+                    "timestamp": time.time(),
+                    "status": "info",
+                    "message": "No new alerts found in CrowdStrike",
+                    "alert_count": 0,
+                    "last_checkpoint": last_checkpoint
+                }]
+            
+            # Step 2: Get detailed alert information
+            logger.info(f"Step 2: Retrieving detailed information for {len(alert_ids)} alerts")
+            log_api_operation_start(
+                logger=logger,
+                api_endpoint="GetAlertsV2",
+                operation="Get detailed alert information",
+                base_url=base_url,
+                client_id_length=len(client_id) if client_id else 0,
+                last_checkpoint=last_checkpoint
+            )
+            
+            # Process alerts in batches to avoid API limits
+            batch_size = 1000
+            all_alerts = []
+            
+            for i in range(0, len(alert_ids), batch_size):
+                batch_ids = alert_ids[i:i + batch_size]
+                logger.debug(f"Processing batch {i//batch_size + 1}: {len(batch_ids)} alerts")
+                
+                alert_details_response = falcon.command(
+                    action="GetAlertsV2",
+                    ids=batch_ids
+                )
+                
+                # Check for authentication errors in batch processing
+                if alert_details_response.get("status_code") == 401:
+                    logger.warning(f"Received 401 authentication error during batch processing")
+                    if attempt < max_retries - 1:
+                        logger.info("Token may have expired during processing, retrying...")
+                        break  # Break out of batch loop to retry authentication
+                    else:
+                        # Final attempt failed
+                        log_label = "Alert Details Query"
+                        error_event = StatusCodeErrors.handle_status_code_errors(
+                            response=alert_details_response,
+                            api_endpoint="GetAlertsV2",
+                            log_label=log_label,
+                            logger=logger
+                        )
+                        error_event["error_details"]["authentication_error"] = True
+                        error_event["error_details"]["batch_processing"] = True
+                        return [error_event]
+                
+                if alert_details_response.get("status_code") not in [200, 201]:
+                    log_label = "Alert Details Query"
+                    error_event = StatusCodeErrors.handle_status_code_errors(
+                        response=alert_details_response,
+                        api_endpoint="GetAlertsV2",
+                        log_label=log_label,
+                        logger=logger
+                    )
+                    return [error_event]
+                
+                batch_alerts = alert_details_response.get("body", {}).get("resources", [])
+                all_alerts.extend(batch_alerts)
+                logger.debug(f"Batch {i//batch_size + 1} completed: {len(batch_alerts)} alerts retrieved")
+            
+            # If we broke out of the batch loop due to auth error, continue to retry
+            if alert_details_response.get("status_code") == 401 and attempt < max_retries - 1:
+                continue
+            
+            logger.info(f"Step 2 completed: Retrieved detailed information for {len(all_alerts)} alerts")
+            log_api_operation_success(
+                logger=logger,
+                api_endpoint="GetAlertsV2",
+                operation="Get detailed alert information",
+                result_count=len(all_alerts),
+                time_filter=time_filter
+            )
+            
+            # Clean up - logout when done
+            try:
+                falcon.logout()
+                logger.debug("Successfully logged out from CrowdStrike API")
+            except Exception as e:
+                logger.debug(f"Logout warning (non-critical): {e}")
+            
+            return all_alerts
+            
+        except Exception as e:
+            logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+            logger.debug(f"Full exception details: {e}", exc_info=True)
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying after unexpected error in 5 seconds...")
+                time.sleep(5)
+                continue
+            else:
+                return [{
+                    "timestamp": time.time(),
+                    "status": "critical",
+                    "message": f"Unexpected error after {max_retries} attempts: {str(e)}",
+                    "error_details": {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "attempts": max_retries
+                    }
+                }]
+    
+    # This should never be reached, but just in case
+    return [{
+        "timestamp": time.time(),
+        "status": "critical",
+        "message": "Authentication retry loop completed without success",
+        "error_details": {"error": "Retry loop exhausted"}
+    }]
+
+
 def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_secret: str, 
                                base_url: str, last_checkpoint: str) -> List[Dict[str, Any]]:
     """
-    Get CrowdStrike alerts data using AlertsV2 service collection
+    Get CrowdStrike alerts data using the best available FalconPy method
     
     Args:
         logger: Logger instance
@@ -412,6 +687,14 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
     Returns:
         List of alert events for Splunk
     """
+    # Try the new APIHarnessV2 method first (recommended)
+    if APIHarnessV2:
+        logger.info("Using enhanced APIHarnessV2 authentication method")
+        return get_crowdstrike_alerts_data_v2(logger, client_id, client_secret, base_url, last_checkpoint)
+    
+    # Fallback to legacy method if APIHarnessV2 is not available
+    logger.warning("APIHarnessV2 not available, falling back to legacy Alerts service class")
+    
     if Alerts is None:
         logger.error("FalconPy SDK not available. Please install falconpy package.")
         return [{
@@ -421,7 +704,7 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
             "error_details": {"error": "Missing falconpy dependency"}
         }]
     
-    logger.info(f"Retrieving CrowdStrike alerts from: {base_url}")
+    logger.info(f"Retrieving CrowdStrike alerts from: {base_url} using legacy Alerts service class")
     
     try:
         # Initialize the Alerts service collection
