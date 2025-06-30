@@ -365,7 +365,7 @@
                         "label": "API Credential"
                     },
                     {
-                        "field": "baseurl",
+                        "field": "cloud",
                         "label": "Cloud Environment"
                     }
                 ],

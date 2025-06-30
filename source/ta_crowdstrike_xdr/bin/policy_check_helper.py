@@ -14,13 +14,23 @@ import crowdstrike_constants as const
 
 try:
     from falconpy import APIHarnessV2, PreventionPolicy
+    from falconpy._constant import USER_AGENT as FALCONPY_USER_AGENT
 except ImportError:
     APIHarnessV2 = None
     PreventionPolicy = None
+    FALCONPY_USER_AGENT = None
 
 
 ADDON_NAME = "ta_crowdstrike_xdr"
 CHECKPOINTER_NAME = "ta_crowdstrike_xdr_checkpoints"
+
+
+def get_custom_user_agent():
+    """Create a custom user agent that identifies the add-on and includes FalconPy version."""
+    if FALCONPY_USER_AGENT:
+        return f"{ADDON_NAME}/1.0.0 {FALCONPY_USER_AGENT}"
+    else:
+        return f"{ADDON_NAME}/1.0.0"
 
 
 class StatusCodeErrors:
@@ -401,47 +411,34 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             "error_details": {"error": "Client ID and Client Secret are required"}
         }]
     
+    # Clean credentials - remove any whitespace
+    client_id = client_id.strip()
+    client_secret = client_secret.strip()
+    
+    # Log credential info for debugging (without exposing actual values)
+    logger.info(f"Authentication Debug - Client ID length: {len(client_id)}, Client Secret length: {len(client_secret)}")
+    logger.info(f"Authentication Debug - Base URL: {base_url}")
+    
     # Retry logic for authentication failures
     for attempt in range(max_retries):
         try:
             logger.debug(f"Authentication attempt {attempt + 1} of {max_retries}")
             
-            # Initialize the APIHarnessV2 (Uber Class) with automatic token management
+            # Initialize the APIHarnessV2 with Direct Authentication
+            # Based on falconpy tests, we should NOT use context manager for direct auth
             falcon = APIHarnessV2(
                 client_id=client_id,
                 client_secret=client_secret,
                 base_url=base_url,
-                debug=logger.level <= logging.DEBUG
+                debug=logger.level <= logging.DEBUG,
+                proxy={},  # Empty proxy dict to ensure no proxy issues
+                user_agent=get_custom_user_agent()
             )
             
-            # Test authentication
-            logger.debug("Testing authentication...")
-            if not falcon.authenticated:
-                falcon.login()
-                
-            if not falcon.authenticated:
-                logger.error(f"Authentication failed on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying authentication in 5 seconds...")
-                    time.sleep(5)
-                    continue
-                else:
-                    return [{
-                        "timestamp": time.time(),
-                        "status": "critical",
-                        "message": "Authentication failed after all retry attempts",
-                        "error_details": {
-                            "error": "Authentication failure",
-                            "attempts": max_retries,
-                            "base_url": base_url,
-                            "client_id_length": len(client_id) if client_id else 0
-                        }
-                    }]
+            logger.info(f"Successfully created CrowdStrike API client (attempt {attempt + 1})")
             
-            logger.info(f"Successfully authenticated to CrowdStrike API (attempt {attempt + 1})")
-            logger.debug(f"Token status: {falcon.token_status}, Token valid: {falcon.token_valid}")
-            
-            # Step 1: Query all prevention policy IDs
+            # The APIHarnessV2 with client credentials should authenticate automatically on first API call
+            # Let's make the API call directly without explicit authentication
             logger.info("Step 1: Querying all prevention policy IDs")
             log_api_operation_start(
                 logger=logger,
@@ -452,24 +449,45 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                 last_checkpoint="N/A"
             )
             
+            # Make the API call - authentication happens automatically
             policy_response = falcon.command(
                 action="queryCombinedPreventionPolicies",
                 filter="platform_name:'Windows'+platform_name:'Mac'+platform_name:'Linux'"
             )
             
-            # Check for authentication errors and retry if needed
-            if policy_response.get("status_code") == 401:
-                logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
+            # Check if we got a response
+            if not policy_response:
+                logger.error(f"No response received from API call on attempt {attempt + 1}")
                 if attempt < max_retries - 1:
-                    logger.info("Token may have expired, forcing re-authentication...")
-                    try:
-                        falcon.logout()
-                    except:
-                        pass
                     time.sleep(2)
                     continue
                 else:
-                    log_label = "Prevention Policy Query (Page 1)"
+                    return [{
+                        "timestamp": time.time(),
+                        "status": "critical",
+                        "message": "No response received from CrowdStrike API",
+                        "error_details": {"error": "Empty response from API"}
+                    }]
+            
+            # Check for authentication errors
+            status_code = policy_response.get("status_code", 0)
+            logger.debug(f"API response status code: {status_code}")
+            
+            if status_code == 401:
+                logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
+                
+                # Log more details about the 401 error
+                if policy_response.get("body"):
+                    errors = policy_response.get("body", {}).get("errors", [])
+                    if errors:
+                        logger.error(f"Authentication error details: {errors}")
+                
+                if attempt < max_retries - 1:
+                    logger.info("Authentication error - will retry...")
+                    time.sleep(2)
+                    continue
+                else:
+                    log_label = "Prevention Policy Query"
                     error_event = StatusCodeErrors.handle_status_code_errors(
                         response=policy_response,
                         api_endpoint="queryCombinedPreventionPolicies",
@@ -478,10 +496,18 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                     )
                     error_event["error_details"]["authentication_error"] = True
                     error_event["error_details"]["max_retries_exceeded"] = True
+                    error_event["error_details"]["troubleshooting"] = [
+                        "Verify Client ID and Client Secret are correct",
+                        "Ensure credentials are for the correct CrowdStrike environment",
+                        f"Current base URL: {base_url}",
+                        "Check if credentials have been rotated or expired",
+                        "Verify API client has required scopes (prevention-policies:read)",
+                        "Ensure no extra whitespace or special characters in credentials"
+                    ]
                     return [error_event]
             
-            if policy_response.get("status_code") not in [200, 201]:
-                log_label = "Prevention Policy Query (Page 1)"
+            if status_code not in [200, 201]:
+                log_label = "Prevention Policy Query"
                 error_event = StatusCodeErrors.handle_status_code_errors(
                     response=policy_response,
                     api_endpoint="queryCombinedPreventionPolicies",
@@ -490,6 +516,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                 )
                 return [error_event]
             
+            # Success! Extract policies
             policies = policy_response.get("body", {}).get("resources", [])
             logger.info(f"Step 1 completed: Found {len(policies)} prevention policies")
             log_api_operation_success(
@@ -509,13 +536,8 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                     "policy_count": 0
                 }]
             
-            # Clean up - logout when done
-            try:
-                falcon.logout()
-                logger.debug("Successfully logged out from CrowdStrike API")
-            except Exception as e:
-                logger.debug(f"Logout warning (non-critical): {e}")
-            
+            # If we need to get more details, we would make additional API calls here
+            # For now, return the policies we found
             return policies
             
         except Exception as e:
@@ -534,7 +556,14 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
                     "error_details": {
                         "error": str(e),
                         "error_type": type(e).__name__,
-                        "attempts": max_retries
+                        "attempts": max_retries,
+                        "base_url": base_url,
+                        "troubleshooting": [
+                            "Check network connectivity to CrowdStrike API",
+                            "Verify no firewall or proxy blocking connections",
+                            "Ensure FalconPy library is up to date",
+                            "Check system time is synchronized (for token generation)"
+                        ]
                     }
                 }]
     
@@ -546,6 +575,135 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
     }]
 
 
+def test_crowdstrike_connection(logger: logging.Logger, client_id: str, client_secret: str, base_url: str) -> Dict[str, Any]:
+    """
+    Test CrowdStrike API connection with minimal API call
+    
+    Returns diagnostic information about the connection attempt
+    """
+    try:
+        from falconpy import APIHarnessV2
+        
+        # Clean credentials
+        client_id = client_id.strip()
+        client_secret = client_secret.strip()
+        
+        logger.info("Testing CrowdStrike API connection...")
+        
+        # Create client without context manager (direct auth)
+        falcon = APIHarnessV2(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+            debug=True,
+            user_agent=get_custom_user_agent()
+        )
+        
+        # Make a simple API call that requires minimal permissions
+        # GetSensorVisibilityExclusionsV1 is a good test endpoint
+        response = falcon.command("GetSensorVisibilityExclusionsV1")
+        
+        status_code = response.get("status_code", 0)
+        
+        if status_code == 200:
+            return {
+                "status": "success",
+                "message": "API connection successful",
+                "base_url": base_url,
+                "status_code": status_code
+            }
+        elif status_code == 401:
+            # Extract error details
+            errors = response.get("body", {}).get("errors", [])
+            error_msg = errors[0].get("message", "Unknown error") if errors else "Authentication failed"
+            
+            return {
+                "status": "auth_failed",
+                "message": f"Authentication failed: {error_msg}",
+                "base_url": base_url,
+                "status_code": status_code,
+                "errors": errors
+            }
+        else:
+            return {
+                "status": "api_error",
+                "message": f"API returned unexpected status code: {status_code}",
+                "base_url": base_url,
+                "status_code": status_code,
+                "response": response
+            }
+            
+    except Exception as e:
+        return {
+            "status": "exception",
+            "message": f"Exception during connection test: {str(e)}",
+            "base_url": base_url,
+            "error_type": type(e).__name__,
+            "error": str(e)
+        }
+
+
+# Alternative implementation using Service Classes if Uber class fails
+def get_prevention_policies_data_service_class(logger: logging.Logger, client_id: str, client_secret: str, base_url: str = None) -> List[Dict[str, Any]]:
+    """
+    Fallback method using PreventionPolicy service class instead of Uber class
+    """
+    if PreventionPolicy is None:
+        logger.error("FalconPy PreventionPolicy service class not available")
+        return [{
+            "timestamp": time.time(),
+            "status": "critical",
+            "message": "FalconPy SDK not available - cannot retrieve prevention policies",
+            "error_details": {"error": "Missing falconpy dependency"}
+        }]
+    
+    # Use default base URL if not provided
+    if not base_url:
+        base_url = const.us_commercial_base
+        
+    logger.info(f"Using PreventionPolicy service class with base URL: {base_url}")
+    
+    try:
+        # Clean credentials
+        client_id = client_id.strip()
+        client_secret = client_secret.strip()
+        
+        # Initialize the Prevention Policy service
+        falcon = PreventionPolicy(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+            debug=logger.level <= logging.DEBUG,
+            user_agent=get_custom_user_agent()
+        )
+        
+        # Query policies - the service class handles auth automatically
+        result = falcon.query_combined_policies(
+            filter="platform_name:'Windows'+platform_name:'Mac'+platform_name:'Linux'",
+            limit=500
+        )
+        
+        if result.get("status_code") == 200:
+            policies = result.get("body", {}).get("resources", [])
+            logger.info(f"Successfully retrieved {len(policies)} policies using service class")
+            return policies
+        else:
+            logger.error(f"Service class API call failed with status: {result.get('status_code')}")
+            return [{
+                "timestamp": time.time(),
+                "status": "critical",
+                "message": f"API call failed with status {result.get('status_code')}",
+                "error_details": result
+            }]
+            
+    except Exception as e:
+        logger.error(f"Exception using service class: {e}")
+        return [{
+            "timestamp": time.time(),
+            "status": "critical",
+            "message": f"Exception using service class: {str(e)}",
+            "error_details": {"error": str(e)}
+        }]
 def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_secret: str, base_url: str = None) -> List[Dict[str, Any]]:
     """
     Get CrowdStrike prevention policies data using the best available FalconPy method

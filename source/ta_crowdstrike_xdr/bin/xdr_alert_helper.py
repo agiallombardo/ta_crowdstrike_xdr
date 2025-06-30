@@ -14,13 +14,23 @@ import crowdstrike_constants as const
 
 try:
     from falconpy import APIHarnessV2, Alerts
+    from falconpy._constant import USER_AGENT as FALCONPY_USER_AGENT
 except ImportError:
     APIHarnessV2 = None
     Alerts = None
+    FALCONPY_USER_AGENT = None
 
 
 ADDON_NAME = "ta_crowdstrike_xdr"
 CHECKPOINTER_NAME = "ta_crowdstrike_xdr_checkpoints"
+
+
+def get_custom_user_agent():
+    """Create a custom user agent that identifies the add-on and includes FalconPy version."""
+    if FALCONPY_USER_AGENT:
+        return f"{ADDON_NAME}/1.0.0 {FALCONPY_USER_AGENT}"
+    else:
+        return f"{ADDON_NAME}/1.0.0"
 
 
 class StatusCodeErrors:
@@ -429,41 +439,18 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
         try:
             logger.debug(f"Authentication attempt {attempt + 1} of {max_retries}")
             
-            # Initialize the APIHarnessV2 (Uber Class) with automatic token management
+            # Initialize the APIHarnessV2 (Uber Class) with Direct Authentication
+            # According to FalconPy docs, Direct Authentication handles token management automatically
             falcon = APIHarnessV2(
                 client_id=client_id,
                 client_secret=client_secret,
                 base_url=base_url,
-                debug=logger.level <= logging.DEBUG  # Enable debug mode if logger is in debug
+                debug=logger.level <= logging.DEBUG,
+                user_agent=get_custom_user_agent()
             )
             
-            # Test authentication by checking if we can authenticate
-            logger.debug("Testing authentication...")
-            if not falcon.authenticated:
-                # Force authentication
-                falcon.login()
-                
-            if not falcon.authenticated:
-                logger.error(f"Authentication failed on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying authentication in 5 seconds...")
-                    time.sleep(5)
-                    continue
-                else:
-                    return [{
-                        "timestamp": time.time(),
-                        "status": "critical",
-                        "message": "Authentication failed after all retry attempts",
-                        "error_details": {
-                            "error": "Authentication failure",
-                            "attempts": max_retries,
-                            "base_url": base_url,
-                            "client_id_length": len(client_id) if client_id else 0
-                        }
-                    }]
-            
-            logger.info(f"Successfully authenticated to CrowdStrike API (attempt {attempt + 1})")
-            logger.debug(f"Token status: {falcon.token_status}, Token valid: {falcon.token_valid}")
+            logger.info(f"Successfully initialized CrowdStrike API client (attempt {attempt + 1})")
+            logger.debug("Using Direct Authentication - token will be obtained automatically on first API call")
             
             # Step 1: Query alert IDs using V2 API
             logger.info("Step 1: Querying alert IDs using GetQueriesAlertsV2")
@@ -495,12 +482,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             if alert_id_response.get("status_code") == 401:
                 logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
                 if attempt < max_retries - 1:
-                    logger.info("Token may have expired, forcing re-authentication...")
-                    # Force logout and re-authentication
-                    try:
-                        falcon.logout()
-                    except:
-                        pass  # Ignore logout errors
+                    logger.info("Authentication error - will retry with new client instance...")
                     time.sleep(2)
                     continue
                 else:
@@ -634,12 +616,8 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                 time_filter=time_filter
             )
             
-            # Clean up - logout when done
-            try:
-                falcon.logout()
-                logger.debug("Successfully logged out from CrowdStrike API")
-            except Exception as e:
-                logger.debug(f"Logout warning (non-critical): {e}")
+            # Direct Authentication handles token cleanup automatically
+            logger.debug("API operation completed - Direct Authentication handles token management automatically")
             
             return all_alerts
             
