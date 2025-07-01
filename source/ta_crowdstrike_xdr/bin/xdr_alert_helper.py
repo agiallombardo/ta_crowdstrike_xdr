@@ -550,7 +550,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             logger.info(f"Step 2: Retrieving detailed information for {len(alert_ids)} alerts")
             log_api_operation_start(
                 logger=logger,
-                api_endpoint="GetAlertsV2",
+                api_endpoint="PostEntitiesAlertsV2",
                 operation="Get detailed alert information",
                 base_url=base_url,
                 client_id_length=len(client_id) if client_id else 0,
@@ -567,7 +567,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                 
                 alert_details_response = falcon.command(
                     action="PostEntitiesAlertsV2",
-                    ids=batch_ids
+                    body={"composite_ids": batch_ids}
                 )
                 
                 # Check for authentication errors in batch processing
@@ -581,7 +581,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                         log_label = "Alert Details Query"
                         error_event = StatusCodeErrors.handle_status_code_errors(
                             response=alert_details_response,
-                            api_endpoint="GetAlertsV2",
+                            api_endpoint="PostEntitiesAlertsV2",
                             log_label=log_label,
                             logger=logger
                         )
@@ -593,7 +593,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
                     log_label = "Alert Details Query"
                     error_event = StatusCodeErrors.handle_status_code_errors(
                         response=alert_details_response,
-                        api_endpoint="GetAlertsV2",
+                        api_endpoint="PostEntitiesAlertsV2",
                         log_label=log_label,
                         logger=logger
                     )

@@ -518,6 +518,9 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             
             # Success! Extract policies
             policies = policy_response.get("body", {}).get("resources", [])
+            # Handle case where resources is None
+            if policies is None:
+                policies = []
             logger.info(f"Step 1 completed: Found {len(policies)} prevention policies")
             log_api_operation_success(
                 logger=logger,
@@ -685,6 +688,9 @@ def get_prevention_policies_data_service_class(logger: logging.Logger, client_id
         
         if result.get("status_code") == 200:
             policies = result.get("body", {}).get("resources", [])
+            # Handle case where resources is None
+            if policies is None:
+                policies = []
             logger.info(f"Successfully retrieved {len(policies)} policies using service class")
             return policies
         else:
@@ -889,6 +895,9 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             
             if "resources" in detail_result:
                 policies_in_chunk = detail_result["resources"]
+                # Handle case where resources is None
+                if policies_in_chunk is None:
+                    policies_in_chunk = []
                 all_policies.extend(policies_in_chunk)
                 logger.debug(f"Retrieved {len(policies_in_chunk)} policy details in chunk {chunk_count}")
         
@@ -926,12 +935,12 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
                 "policy_modified_timestamp": policy.get("modified_timestamp"),
                 "policy_created_by": policy.get("created_by"),
                 "policy_modified_by": policy.get("modified_by"),
-                "settings_count": len(policy.get("settings", []))
+                "settings_count": len(policy.get("settings") or [])
             }
             
             # Add settings as structured data
             settings_data = []
-            for setting in policy.get("settings", []):
+            for setting in policy.get("settings") or []:
                 setting_info = {
                     "name": setting.get("name"),
                     "value": setting.get("value"),
@@ -943,7 +952,7 @@ def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_
             
             # Add prevention settings summary for easier searching
             prevention_settings = {}
-            for setting in policy.get("settings", []):
+            for setting in policy.get("settings") or []:
                 setting_name = setting.get("name", "")
                 setting_value = setting.get("value", "")
                 if setting_name:
