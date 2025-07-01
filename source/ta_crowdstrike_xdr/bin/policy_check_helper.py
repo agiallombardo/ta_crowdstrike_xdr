@@ -397,6 +397,7 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             
             logger.info(f"Successfully created CrowdStrike API client (attempt {attempt + 1})")
             
+
             # The APIHarnessV2 with client credentials should authenticate automatically on first API call
             # Let's make the API call directly without explicit authentication
             logger.info("Step 1: Querying all prevention policy IDs")
@@ -410,9 +411,11 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             )
             
             # Make the API call - authentication happens automatically
+            # Use correct FQL syntax with OR operators, or no filter to get all policies
             policy_response = falcon.command(
-                action="queryCombinedPreventionPolicies",
-                filter="platform_name:'Windows'+platform_name:'Mac'+platform_name:'Linux'"
+                action="queryCombinedPreventionPolicies"
+                # Note: Removing filter to get all prevention policies
+                # If you want to filter by platform, use: filter="platform_name:'Windows',platform_name:'Mac',platform_name:'Linux'"
             )
             
             # Check if we got a response
@@ -428,6 +431,24 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             # Check for authentication errors
             status_code = policy_response.get("status_code", 0)
             logger.debug(f"API response status code: {status_code}")
+            
+            # Debug: Log the full response structure (without sensitive data)
+            if logger.isEnabledFor(logging.DEBUG):
+                response_keys = list(policy_response.keys()) if policy_response else []
+                logger.debug(f"API response keys: {response_keys}")
+                if 'body' in policy_response and policy_response['body']:
+                    body_keys = list(policy_response['body'].keys()) if isinstance(policy_response['body'], dict) else []
+                    logger.debug(f"API response body keys: {body_keys}")
+                    if 'resources' in policy_response['body']:
+                        resources = policy_response['body']['resources']
+                        logger.debug(f"Resources type: {type(resources)}, length: {len(resources) if resources else 'None'}")
+                        if resources and len(resources) > 0:
+                            logger.debug(f"First resource keys: {list(resources[0].keys()) if isinstance(resources[0], dict) else 'Not a dict'}")
+            else:
+                # Even at INFO level, show some basic response info
+                if 'body' in policy_response and policy_response['body'] and 'resources' in policy_response['body']:
+                    resources = policy_response['body']['resources']
+                    logger.info(f"API returned {len(resources) if resources else 0} resources")
             
             if status_code == 401:
                 logger.warning(f"Received 401 authentication error on attempt {attempt + 1}")
@@ -462,6 +483,16 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             
             if status_code not in [200, 201]:
                 log_label = "Prevention Policy Query"
+                logger.error(f"{log_label}: Unexpected status code {status_code}")
+                
+                # Log additional context for troubleshooting
+                if status_code == 403:
+                    logger.error(f"{log_label}: Access forbidden - check API client permissions")
+                    logger.error(f"{log_label}: Required scope: prevention-policies:read")
+                    logger.error(f"{log_label}: Verify the API client has the correct permissions in CrowdStrike console")
+                elif status_code == 429:
+                    logger.error(f"{log_label}: Rate limit exceeded - too many API requests")
+                
                 StatusCodeErrors.handle_status_code_errors(
                     response=policy_response,
                     api_endpoint="queryCombinedPreventionPolicies",
@@ -475,7 +506,47 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
             # Handle case where resources is None
             if policies is None:
                 policies = []
+            
             logger.info(f"Step 1 completed: Found {len(policies)} prevention policies")
+            
+            # If no policies found, let's try some additional debugging
+            if len(policies) == 0:
+                logger.info("No policies found with queryCombinedPreventionPolicies - trying alternative approach")
+                
+                # Try querying just the policy IDs first to see if that works
+                try:
+                    logger.debug("Attempting queryPreventionPolicies to get policy IDs only")
+                    ids_response = falcon.command(action="queryPreventionPolicies")
+                    
+                    if ids_response and ids_response.get("status_code") in [200, 201]:
+                        policy_ids = ids_response.get("body", {}).get("resources", [])
+                        logger.info(f"queryPreventionPolicies returned {len(policy_ids) if policy_ids else 0} policy IDs")
+                        
+                        if policy_ids and len(policy_ids) > 0:
+                            logger.info("Policy IDs exist - the issue may be with queryCombinedPreventionPolicies")
+                            logger.debug(f"Sample policy IDs: {policy_ids[:3] if len(policy_ids) >= 3 else policy_ids}")
+                            
+                            # Try to get the full policy details using the IDs
+                            logger.debug("Attempting to get policy details using getPreventionPolicies")
+                            details_response = falcon.command(action="getPreventionPolicies", ids=policy_ids[:10])  # Limit to first 10 for testing
+                            
+                            if details_response and details_response.get("status_code") in [200, 201]:
+                                detailed_policies = details_response.get("body", {}).get("resources", [])
+                                if detailed_policies:
+                                    logger.info(f"Successfully retrieved {len(detailed_policies)} detailed policies using alternative method")
+                                    policies = detailed_policies  # Use the detailed policies instead
+                                else:
+                                    logger.warning("getPreventionPolicies returned empty resources")
+                            else:
+                                logger.warning(f"getPreventionPolicies failed with status: {details_response.get('status_code') if details_response else 'No response'}")
+                        else:
+                            logger.info("queryPreventionPolicies also returned no policy IDs - no policies exist or access issue")
+                    else:
+                        logger.warning(f"queryPreventionPolicies failed with status: {ids_response.get('status_code') if ids_response else 'No response'}")
+                        
+                except Exception as debug_error:
+                    logger.debug(f"Alternative query attempt failed: {debug_error}")
+                    # Continue with original empty result
             log_api_operation_success(
                 logger=logger,
                 api_endpoint="queryCombinedPreventionPolicies",
@@ -513,11 +584,6 @@ def get_prevention_policies_data_v2(logger: logging.Logger, client_id: str, clie
     
     logger.error("Authentication retry loop completed without success")
     return []
-
-
-
-
-
 
 def get_prevention_policies_data(logger: logging.Logger, client_id: str, client_secret: str, base_url: str = None) -> List[Dict[str, Any]]:
     """
