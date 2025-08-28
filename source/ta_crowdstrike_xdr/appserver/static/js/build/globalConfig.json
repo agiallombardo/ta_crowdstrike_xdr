@@ -100,6 +100,126 @@
         "inputs": {
             "services": [
                 {
+                    "name": "activity_audit",
+                    "entity": [
+                        {
+                            "type": "text",
+                            "label": "Name",
+                            "validators": [
+                                {
+                                    "type": "regex",
+                                    "errorMsg": "Input Name must begin with a letter and consist exclusively of alphanumeric characters and underscores.",
+                                    "pattern": "^[a-zA-Z]\\w*$"
+                                },
+                                {
+                                    "type": "string",
+                                    "errorMsg": "Length of input name should be between 1 and 100",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                }
+                            ],
+                            "field": "name",
+                            "help": "A unique name for the data input.",
+                            "required": true
+                        },
+                        {
+                            "type": "text",
+                            "field": "interval",
+                            "label": "Interval",
+                            "validators": [
+                                {
+                                    "type": "regex",
+                                    "errorMsg": "Interval must be either a non-negative number, CRON interval or -1.",
+                                    "pattern": "^((?:-1|\\d+(?:\\.\\d+)?)|(([\\*\\d{1,2}\\,\\-\\/]+\\s){4}[\\*\\d{1,2}\\,\\-\\/]+))$"
+                                },
+                                {
+                                    "type": "number",
+                                    "range": [
+                                        10,
+                                        301
+                                    ],
+                                    "errorMsg": "Interval must be between 10 and 301"
+                                }
+                            ],
+                            "help": "Time interval of the data input, in seconds.",
+                            "required": true,
+                            "defaultValue": "300"
+                        },
+                        {
+                            "type": "singleSelect",
+                            "field": "index",
+                            "label": "Index",
+                            "defaultValue": "main",
+                            "options": {
+                                "endpointUrl": "data/indexes?search=isInternal=0+disabled=0",
+                                "denyList": "^_.*$",
+                                "createSearchChoice": true
+                            },
+                            "validators": [
+                                {
+                                    "type": "regex",
+                                    "errorMsg": "Index names must begin with a letter or a number and must contain only letters, numbers, underscores or hyphens.",
+                                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9\\\\_\\\\-]*$"
+                                },
+                                {
+                                    "type": "string",
+                                    "errorMsg": "Length of index name should be between 1 and 80.",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                }
+                            ]
+                        },
+                        {
+                            "type": "singleSelect",
+                            "label": "Account to use",
+                            "options": {
+                                "referenceName": "account"
+                            },
+                            "help": "Account to use for this input.",
+                            "field": "account",
+                            "required": true,
+                            "validators": [
+                                {
+                                    "type": "string",
+                                    "errorMsg": "Length of account name should be between 1 and 100",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                }
+                            ]
+                        },
+                        {
+                            "field": "cloud",
+                            "label": "Select Cloud Environment",
+                            "help": "Select the appropriate cloud environment",
+                            "required": true,
+                            "type": "singleSelect",
+                            "options": {
+                                "disableSearch": true,
+                                "autoCompleteFields": [
+                                    {
+                                        "value": "us_commercial",
+                                        "label": "US Commercial"
+                                    },
+                                    {
+                                        "value": "us_commercial2",
+                                        "label": "US Commercial 2"
+                                    },
+                                    {
+                                        "value": "govcloud",
+                                        "label": "US GovCloud"
+                                    },
+                                    {
+                                        "value": "eucloud",
+                                        "label": "EU Cloud"
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                    "inputHelperModule": "activity_audit_helper",
+                    "title": "Activity Audit"
+                },
+                {
                     "name": "policy_check",
                     "entity": [
                         {
@@ -217,10 +337,10 @@
                         }
                     ],
                     "inputHelperModule": "policy_check_helper",
-                    "title": "Policy Check"
+                    "title": "policy_check"
                 },
                 {
-                    "name": "unified_xdr_alerts",
+                    "name": "xdr_alerts",
                     "entity": [
                         {
                             "type": "text",
@@ -336,8 +456,8 @@
                             }
                         }
                     ],
-                    "inputHelperModule": "xdr_alert_helper",
-                    "title": "Unified XDR Alerts"
+                    "inputHelperModule": "xdr_alerts_helper",
+                    "title": "XDR Alerts"
                 }
             ],
             "title": "Inputs",
@@ -413,8 +533,8 @@
     "meta": {
         "name": "ta_crowdstrike_xdr",
         "restRoot": "ta_crowdstrike_xdr",
-        "version": "1.0.5",
-        "displayName": "Crowdstrike XDR & Health Add-on for Splunk",
+        "version": "2.0.0",
+        "displayName": "Crowdstrike XDR Add-on for Splunk",
         "schemaVersion": "0.0.9",
         "supportedThemes": [
             "light",

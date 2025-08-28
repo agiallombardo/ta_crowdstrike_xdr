@@ -2,8 +2,8 @@
     "openapi": "3.0.0",
     "info": {
         "title": "ta_crowdstrike_xdr",
-        "version": "1.0.5",
-        "description": "Crowdstrike XDR & Health Add-on for Splunk",
+        "version": "2.0.0",
+        "description": "Crowdstrike XDR Add-on for Splunk",
         "contact": {
             "name": ""
         },
@@ -74,6 +74,95 @@
                         "enum": [
                             "INFO",
                             "ERROR"
+                        ]
+                    }
+                }
+            },
+            "activity_audit": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "interval": {
+                        "type": "string"
+                    },
+                    "index": {
+                        "type": "string"
+                    },
+                    "account": {
+                        "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
+                    },
+                    "disabled": {
+                        "type": "string",
+                        "enum": [
+                            "False",
+                            "True"
+                        ]
+                    }
+                }
+            },
+            "activity_audit_without_name": {
+                "type": "object",
+                "properties": {
+                    "interval": {
+                        "type": "string"
+                    },
+                    "index": {
+                        "type": "string"
+                    },
+                    "account": {
+                        "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
+                        ]
+                    },
+                    "disabled": {
+                        "type": "string",
+                        "enum": [
+                            "False",
+                            "True"
+                        ]
+                    }
+                }
+            },
+            "activity_audit_without_disabled": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "interval": {
+                        "type": "string"
+                    },
+                    "index": {
+                        "type": "string"
+                    },
+                    "account": {
+                        "type": "string"
+                    },
+                    "cloud": {
+                        "type": "string",
+                        "enum": [
+                            "us_commercial",
+                            "us_commercial2",
+                            "govcloud",
+                            "eucloud"
                         ]
                     }
                 }
@@ -167,7 +256,7 @@
                     }
                 }
             },
-            "unified_xdr_alerts": {
+            "xdr_alerts": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -200,7 +289,7 @@
                     }
                 }
             },
-            "unified_xdr_alerts_without_name": {
+            "xdr_alerts_without_name": {
                 "type": "object",
                 "properties": {
                     "interval": {
@@ -230,7 +319,7 @@
                     }
                 }
             },
-            "unified_xdr_alerts_without_disabled": {
+            "xdr_alerts_without_disabled": {
                 "type": "object",
                 "properties": {
                     "name": {
@@ -579,6 +668,229 @@
                 }
             ]
         },
+        "/ta_crowdstrike_xdr_activity_audit": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "description": "Get list of items for activity_audit",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entry": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "content": {
+                                                        "$ref": "#/components/schemas/activity_audit_without_name"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Get list of items for activity_audit",
+                "deprecated": false
+            },
+            "post": {
+                "responses": {
+                    "200": {
+                        "description": "Create item in activity_audit",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entry": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "content": {
+                                                        "$ref": "#/components/schemas/activity_audit_without_name"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Create item in activity_audit",
+                "requestBody": {
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/activity_audit_without_disabled"
+                            }
+                        }
+                    },
+                    "required": false
+                },
+                "deprecated": false
+            },
+            "parameters": [
+                {
+                    "name": "output_mode",
+                    "in": "query",
+                    "required": true,
+                    "description": "Output mode",
+                    "schema": {
+                        "type": "string",
+                        "enum": [
+                            "json"
+                        ],
+                        "default": "json"
+                    }
+                }
+            ]
+        },
+        "/ta_crowdstrike_xdr_activity_audit/{name}": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "description": "Get activity_audit item details",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entry": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "content": {
+                                                        "$ref": "#/components/schemas/activity_audit_without_name"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Get activity_audit item details",
+                "deprecated": false
+            },
+            "post": {
+                "responses": {
+                    "200": {
+                        "description": "Update activity_audit item",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entry": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "content": {
+                                                        "$ref": "#/components/schemas/activity_audit_without_name"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Update activity_audit item",
+                "requestBody": {
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/activity_audit_without_name"
+                            }
+                        }
+                    },
+                    "required": false
+                },
+                "deprecated": false
+            },
+            "delete": {
+                "responses": {
+                    "200": {
+                        "description": "Delete activity_audit item",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "entry": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "content": {
+                                                        "$ref": "#/components/schemas/activity_audit_without_name"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Delete activity_audit item",
+                "deprecated": false
+            },
+            "parameters": [
+                {
+                    "name": "name",
+                    "in": "path",
+                    "required": true,
+                    "description": "The name of the item to operate on",
+                    "schema": {
+                        "type": "string"
+                    }
+                },
+                {
+                    "name": "output_mode",
+                    "in": "query",
+                    "required": true,
+                    "description": "Output mode",
+                    "schema": {
+                        "type": "string",
+                        "enum": [
+                            "json"
+                        ],
+                        "default": "json"
+                    }
+                }
+            ]
+        },
         "/ta_crowdstrike_xdr_policy_check": {
             "get": {
                 "responses": {
@@ -802,11 +1114,11 @@
                 }
             ]
         },
-        "/ta_crowdstrike_xdr_unified_xdr_alerts": {
+        "/ta_crowdstrike_xdr_xdr_alerts": {
             "get": {
                 "responses": {
                     "200": {
-                        "description": "Get list of items for unified_xdr_alerts",
+                        "description": "Get list of items for xdr_alerts",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -821,7 +1133,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                                        "$ref": "#/components/schemas/xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -832,13 +1144,13 @@
                         }
                     }
                 },
-                "description": "Get list of items for unified_xdr_alerts",
+                "description": "Get list of items for xdr_alerts",
                 "deprecated": false
             },
             "post": {
                 "responses": {
                     "200": {
-                        "description": "Create item in unified_xdr_alerts",
+                        "description": "Create item in xdr_alerts",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -853,7 +1165,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                                        "$ref": "#/components/schemas/xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -864,12 +1176,12 @@
                         }
                     }
                 },
-                "description": "Create item in unified_xdr_alerts",
+                "description": "Create item in xdr_alerts",
                 "requestBody": {
                     "content": {
                         "application/x-www-form-urlencoded": {
                             "schema": {
-                                "$ref": "#/components/schemas/unified_xdr_alerts_without_disabled"
+                                "$ref": "#/components/schemas/xdr_alerts_without_disabled"
                             }
                         }
                     },
@@ -893,11 +1205,11 @@
                 }
             ]
         },
-        "/ta_crowdstrike_xdr_unified_xdr_alerts/{name}": {
+        "/ta_crowdstrike_xdr_xdr_alerts/{name}": {
             "get": {
                 "responses": {
                     "200": {
-                        "description": "Get unified_xdr_alerts item details",
+                        "description": "Get xdr_alerts item details",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -912,7 +1224,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                                        "$ref": "#/components/schemas/xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -923,13 +1235,13 @@
                         }
                     }
                 },
-                "description": "Get unified_xdr_alerts item details",
+                "description": "Get xdr_alerts item details",
                 "deprecated": false
             },
             "post": {
                 "responses": {
                     "200": {
-                        "description": "Update unified_xdr_alerts item",
+                        "description": "Update xdr_alerts item",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -944,7 +1256,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                                        "$ref": "#/components/schemas/xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -955,12 +1267,12 @@
                         }
                     }
                 },
-                "description": "Update unified_xdr_alerts item",
+                "description": "Update xdr_alerts item",
                 "requestBody": {
                     "content": {
                         "application/x-www-form-urlencoded": {
                             "schema": {
-                                "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                "$ref": "#/components/schemas/xdr_alerts_without_name"
                             }
                         }
                     },
@@ -971,7 +1283,7 @@
             "delete": {
                 "responses": {
                     "200": {
-                        "description": "Delete unified_xdr_alerts item",
+                        "description": "Delete xdr_alerts item",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -986,7 +1298,7 @@
                                                         "type": "string"
                                                     },
                                                     "content": {
-                                                        "$ref": "#/components/schemas/unified_xdr_alerts_without_name"
+                                                        "$ref": "#/components/schemas/xdr_alerts_without_name"
                                                     }
                                                 }
                                             }
@@ -997,7 +1309,7 @@
                         }
                     }
                 },
-                "description": "Delete unified_xdr_alerts item",
+                "description": "Delete xdr_alerts item",
                 "deprecated": false
             },
             "parameters": [
