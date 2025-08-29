@@ -28,7 +28,6 @@ __pycache__/
 *.egg
 *.egg-info/
 pip-log.txt
-*.manifest
 *.spec
 .env
 .venv
@@ -64,6 +63,7 @@ logs/
 
 # VS Code settings
 .vscode/
+.zencoder/
 
 # Spyder settings
 .spyderproject

@@ -1,0 +1,56 @@
+{
+    "dependencies": null,
+    "incompatibleApps": null,
+    "info": {
+        "author": [
+            {
+                "company": NullQu LLC,
+                "email": anthony@nullqu.com,
+                "name": "Anthony Giallombardo"
+            }
+        ],
+        "classification": {
+            "categories": [
+                "Security, Fraud & Compliance"
+            ],
+            "developmentStatus": "Production/Stable",
+            "intendedAudience": "IT Professionals"
+        },
+        "commonInformationModels": null,
+        "description": "Crowdstrike XDR Add-on for Splunk",
+        "id": {
+            "group": null,
+            "name": "ta_crowdstrike_xdr",
+            "version": "2.5.0"
+        },
+        "license": {
+            "name": "LICENSE.md",
+            "text": "./LICENSES/LICENSE.md",
+            "uri": null
+        },
+        "privacyPolicy": {
+            "name": null,
+            "text": null,
+            "uri": null
+        },
+        "releaseDate": null,
+        "releaseNotes": {
+            "name": "README",
+            "text": "./README/README.md",
+            "uri": ""
+        },
+        "title": "Crowdstrike XDR Add-on for Splunk"
+    },
+    "inputGroups": null,
+    "platformRequirements": null,
+    "schemaVersion": "2.0.0",
+    "supportedDeployments": [
+        "_standalone",
+        "_distributed",
+        "_search_head_clustering"
+    ],
+    "targetWorkloads": [
+        "_search_heads"
+    ],
+    "tasks": null
+}
