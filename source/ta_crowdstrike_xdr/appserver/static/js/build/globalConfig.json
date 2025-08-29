@@ -337,10 +337,10 @@
                         }
                     ],
                     "inputHelperModule": "policy_check_helper",
-                    "title": "policy_check"
+                    "title": "Policy Check"
                 },
                 {
-                    "name": "xdr_alerts",
+                    "name": "unified_xdr_alerts",
                     "entity": [
                         {
                             "type": "text",
@@ -456,7 +456,7 @@
                             }
                         }
                     ],
-                    "inputHelperModule": "xdr_alerts_helper",
+                    "inputHelperModule": "xdr_alert_helper",
                     "title": "XDR Alerts"
                 }
             ],
