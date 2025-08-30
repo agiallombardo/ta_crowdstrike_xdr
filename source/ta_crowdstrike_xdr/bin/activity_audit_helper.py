@@ -286,7 +286,7 @@ def get_account_credentials(session_key: str, account_name: str) -> Tuple[Option
         return None, None
 
 
-def get_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: str) -> Tuple[bool, Optional[int]]:
+def get_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: str) -> Tuple[bool, Optional[int], Optional[int]]:
     """
     Get checkpoint data from KVStore
     
@@ -296,7 +296,7 @@ def get_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         checkpoint_name: Name of the checkpoint
         
     Returns:
-        Tuple of (success, checkpoint_value_in_milliseconds)
+        Tuple of (success, last_event_time_in_milliseconds, last_offset)
     """
     try:
         checkpoint_collection = checkpointer.KVStoreCheckpointer(
@@ -304,17 +304,20 @@ def get_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         )
         checkpoint_data = checkpoint_collection.get(checkpoint_name)
         if checkpoint_data:
-            return True, checkpoint_data.get("last_event_time")
+            last_event_time = checkpoint_data.get("last_event_time")
+            last_offset = checkpoint_data.get("last_offset", 0)
+            return True, last_event_time, last_offset
         else:
             # Default to 90 days ago in milliseconds if no checkpoint exists
             default_time_ms = int((datetime.utcnow() - timedelta(days=90)).timestamp() * 1000)
-            return True, default_time_ms
+            return True, default_time_ms, 0
     except Exception as e:
         logger.error(f"Error retrieving checkpoint: {e}")
-        return False, None
+        return False, None, None
 
 
-def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: str, checkpoint_value: int) -> bool:
+def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: str, 
+                  checkpoint_time: int, checkpoint_offset: int = None) -> bool:
     """
     Set checkpoint data in KVStore
     
@@ -322,7 +325,8 @@ def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         logger: Logger instance
         session_key: Splunk session key
         checkpoint_name: Name of the checkpoint
-        checkpoint_value: Event creation time in milliseconds to store
+        checkpoint_time: Event creation time in milliseconds to store
+        checkpoint_offset: Last processed offset to store (optional)
         
     Returns:
         Success status
@@ -331,7 +335,10 @@ def set_checkpoint(logger: logging.Logger, session_key: str, checkpoint_name: st
         checkpoint_collection = checkpointer.KVStoreCheckpointer(
             checkpoint_name, session_key, ADDON_NAME
         )
-        checkpoint_collection.update(checkpoint_name, {'last_event_time': checkpoint_value})
+        checkpoint_data = {'last_event_time': checkpoint_time}
+        if checkpoint_offset is not None:
+            checkpoint_data['last_offset'] = checkpoint_offset
+        checkpoint_collection.update(checkpoint_name, checkpoint_data)
         return True
     except Exception as e:
         logger.error(f"Error setting checkpoint: {e}")
@@ -360,34 +367,43 @@ def get_base_url_from_cloud(cloud_env: str) -> str:
 
 
 def get_crowdstrike_activity_audit_data(logger: logging.Logger, client_id: str, client_secret: str, 
-                                       base_url: str, last_event_time: int, max_retries: int = 3) -> List[Dict[str, Any]]:
+                                       base_url: str, last_event_time: int, last_offset: int = 0, max_retries: int = 3) -> List[Dict[str, Any]]:
     """
-    Get CrowdStrike Activity Audit data using APIHarnessV2 (Uber Class) with EventStreams API
+    Get CrowdStrike Activity Audit data using EventStreams library with offset-based positioning
+    
+    This implementation follows CrowdStrike Event Streams API best practices to resolve the 20-day data gap issue:
+    - Uses EventStreams class instead of APIHarnessV2 for better stream handling
+    - Implements offset-based positioning for proper stream resumption
+    - First run: whence=0 (historic start from 90 days ago)
+    - Resume: offset=<last_offset + 1> (proper resumption from last processed event)
+    - Handles stream rotation by trying all available streams with correct positioning
+    - Maintains backward compatibility with existing checkpoints
     
     Args:
         logger: Logger instance
         client_id: CrowdStrike client ID
         client_secret: CrowdStrike client secret
         base_url: CrowdStrike base URL
-        last_event_time: Last checkpoint event creation time in milliseconds
+        last_event_time: Last checkpoint event creation time in milliseconds (for filtering)
+        last_offset: Last processed event offset (for stream positioning via whence parameter)
         max_retries: Maximum number of retry attempts for authentication failures
         
     Returns:
-        List of activity audit events for Splunk
+        List of activity audit events for Splunk with proper checkpoint information
     """
-    if not APIHarnessV2:
-        logger.error("FalconPy APIHarnessV2 not available - cannot retrieve Activity Audit events")
+    if not EventStreams:
+        logger.error("FalconPy EventStreams not available - cannot retrieve Activity Audit events")
         return []
     
-    logger.info(f"Retrieving CrowdStrike Activity Audit events from: {base_url} using APIHarnessV2")
+    logger.info(f"Retrieving CrowdStrike Activity Audit events from: {base_url} using EventStreams library")
     
     # Retry logic for authentication failures
     for attempt in range(max_retries):
         try:
             logger.debug(f"Authentication attempt {attempt + 1} of {max_retries}")
             
-            # Initialize the APIHarnessV2 (Uber Class) with Direct Authentication
-            falcon = APIHarnessV2(
+            # Initialize the EventStreams service with Direct Authentication
+            falcon = EventStreams(
                 client_id=client_id,
                 client_secret=client_secret,
                 base_url=base_url,
@@ -395,11 +411,11 @@ def get_crowdstrike_activity_audit_data(logger: logging.Logger, client_id: str, 
                 user_agent=get_custom_user_agent()
             )
             
-            logger.info(f"Successfully initialized CrowdStrike API client (attempt {attempt + 1})")
-            logger.debug("Using Direct Authentication - token will be obtained automatically on first API call")
+            logger.info(f"Successfully initialized CrowdStrike EventStreams client (attempt {attempt + 1})")
+            logger.debug("Using EventStreams with Direct Authentication - token will be obtained automatically on first API call")
             
             # Step 1: Get available event streams
-            logger.info("Step 1: Getting available event streams using APIHarnessV2")
+            logger.info("Step 1: Getting available event streams using EventStreams")
             log_api_operation_start(
                 logger=logger,
                 api_endpoint="list_available_streams",
@@ -410,9 +426,9 @@ def get_crowdstrike_activity_audit_data(logger: logging.Logger, client_id: str, 
             )
             
             app_id = "ActivityAuditCollector"
-            streams_response = falcon.command(
-                action="list_available_streams",
-                appId=app_id,
+            logger.debug(f"Making API call with app_id='{app_id}' using EventStreams.list_available_streams()")
+            streams_response = falcon.list_available_streams(
+                app_id=app_id,
                 format="json"
             )
             
@@ -461,23 +477,57 @@ def get_crowdstrike_activity_audit_data(logger: logging.Logger, client_id: str, 
             
             all_events = []
             latest_event_time = last_event_time
+            latest_offset = last_offset
+            events_found = False
             
-            # Process each stream (typically there's only one)
+            # Process each stream - try all streams to find the one with current data
+            # CrowdStrike rotates streams approximately every 90 days, so we need to check all available streams
             for stream_idx, stream_data in enumerate(streams):
                 logger.info(f"Processing stream {stream_idx + 1}/{len(streams)}")
                 
-                # Consume events from this stream with timestamp filtering
-                events, new_event_time = consume_activity_audit_events_v2(
+                # Proactively refresh the stream session to ensure it's active
+                if stream_data.get('partition'):
+                    logger.debug("Proactively refreshing stream session before consumption")
+                    refresh_stream_session(logger, falcon, stream_data, app_id)
+                
+                # Consume events from this stream with offset and timestamp filtering
+                events, new_event_time, new_offset = consume_activity_audit_events_v2(
                     logger=logger,
                     stream_data=stream_data,
                     last_event_time=last_event_time,
+                    last_offset=last_offset,
                     stream_idx=stream_idx,
-                    timeout=60
+                    timeout=60,
+                    falcon=falcon,
+                    app_id=app_id
                 )
+                
+                if events:
+                    events_found = True
+                    logger.info(f"Found {len(events)} events in stream {stream_idx + 1}")
+                else:
+                    logger.info(f"No new events found in stream {stream_idx + 1}")
                 
                 all_events.extend(events)
                 if new_event_time > latest_event_time:
                     latest_event_time = new_event_time
+                if new_offset > latest_offset:
+                    latest_offset = new_offset
+                    
+                # If we found events in this stream, we can continue processing other streams
+                # but log which stream is providing data
+                if events:
+                    logger.info(f"Stream {stream_idx + 1} is active and providing data")
+            
+            # Log summary of stream processing
+            if not events_found and len(streams) > 0:
+                logger.warning(f"No new events found in any of the {len(streams)} available streams. This may indicate:")
+                logger.warning("1. All streams have been processed up to the current time")
+                logger.warning("2. Stream rotation may have occurred and new streams are not yet available")
+                logger.warning("3. There may be a delay in data availability")
+                logger.info(f"Last processed event timestamp: {last_event_time} ({datetime.fromtimestamp(last_event_time/1000).isoformat()})")
+            elif events_found:
+                logger.info(f"Successfully collected events from {len([s for s in range(len(streams)) if any(e.get('ta_data', {}).get('stream_id') == s+1 for e in all_events)])} active stream(s)")
             
             logger.info(f"Step 2 completed: Retrieved {len(all_events)} Activity Audit events")
             log_api_operation_success(
@@ -548,19 +598,86 @@ def extract_data_feed_urls(response: Dict[str, Any]) -> List[Dict[str, Any]]:
     return streams
 
 
+def refresh_stream_session(logger: logging.Logger, falcon: Any, stream_data: Dict[str, Any], app_id: str) -> bool:
+    """
+    Refresh an active event stream session using refresh_active_stream_session.
+    
+    Args:
+        logger: Logger instance
+        falcon: EventStreams instance
+        stream_data: Stream data containing partition and refresh URL
+        app_id: Application ID for the stream
+        
+    Returns:
+        True if refresh was successful, False otherwise
+    """
+    try:
+        if not stream_data.get('partition'):
+            logger.warning("No partition available for stream refresh")
+            return False
+            
+        logger.info("Refreshing active stream session")
+        refresh_response = falcon.refresh_active_stream_session(
+            app_id=app_id,
+            partition=stream_data['partition']
+        )
+        
+        if refresh_response.get("status_code") in [200, 201]:
+            logger.info("Stream session refreshed successfully")
+            return True
+        else:
+            logger.warning(f"Stream session refresh failed with status: {refresh_response.get('status_code')}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error refreshing stream session: {e}")
+        return False
+
+
 def consume_activity_audit_events_v2(logger: logging.Logger, stream_data: Dict[str, Any], 
-                                    last_event_time: int, stream_idx: int, 
-                                    timeout: int = 60) -> Tuple[List[Dict[str, Any]], int]:
-    """Consume Activity Audit events from a dataFeedURL with timestamp filtering."""
+                                    last_event_time: int, last_offset: int, stream_idx: int, 
+                                    timeout: int = 60, falcon: Any = None, app_id: str = None) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Consume Activity Audit events from a dataFeedURL with offset-based positioning.
+    
+    This function follows the CrowdStrike Event Streams API pattern:
+    - Uses offset for whence parameter when resuming from checkpoint
+    - Uses timestamp for event filtering and validation
+    - Handles stream rotation by trying different streams with proper offset positioning
+    
+    Args:
+        logger: Logger instance
+        stream_data: Stream configuration including dataFeedURL and sessionToken
+        last_event_time: Last processed event timestamp in milliseconds (for filtering)
+        last_offset: Last processed event offset (for positioning via whence)
+        stream_idx: Index of the current stream (for logging)
+        timeout: Connection timeout in seconds
+        falcon: EventStreams instance for session refresh
+        app_id: Application ID for session refresh
+        
+    Returns:
+        Tuple of (events_list, latest_event_timestamp, latest_offset)
+    """
     if not stream_data.get('dataFeedURL'):
         logger.warning("No dataFeedURL provided")
-        return [], last_event_time
+        return [], last_event_time, last_offset
         
     url = stream_data['dataFeedURL']
     
-    # Build URL with timestamp filtering instead of offset
-    # Start from beginning but filter events by eventCreationTime
-    url_formed = f"{url}&whence=0"
+    # Build URL following CrowdStrike Event Streams API best practices for offset-based positioning
+    # This implementation addresses the 20-day data gap issue by using proper stream positioning:
+    # - First run: whence=0 (historic start from 90 days ago)
+    # - Resume: offset=<last_offset + 1> (proper resumption from last processed event)
+    # - Handles stream rotation by trying all streams with correct offset positioning
+    if last_offset > 0:
+        # Resume from checkpoint using offset + 1 for proper stream positioning
+        offset_val = last_offset + 1
+        url_formed = f"{url}&offset={offset_val}"
+        logger.debug(f"Using offset-based positioning: offset={offset_val} (from checkpoint: {last_offset})")
+    else:
+        # Initial start - use whence=0 for historic data collection
+        url_formed = f"{url}&whence=0"
+        logger.debug("Initial start: using whence=0 for historic data")
     
     headers = {
         'Accept': 'application/json',
@@ -573,17 +690,38 @@ def consume_activity_audit_events_v2(logger: logging.Logger, stream_data: Dict[s
     
     events = []
     latest_event_time = last_event_time
+    latest_offset = last_offset
     start_time = time.time()
     
     try:
         logger.info(f"Connecting to event stream {stream_idx + 1}: {url_formed}")
-        logger.info(f"Collecting events newer than {last_event_time} (timestamp in ms) for {timeout} seconds")
+        if last_offset > 0:
+            logger.info(f"Resuming from offset {last_offset} (timestamp filter: {last_event_time} ms) for {timeout} seconds")
+        else:
+            logger.info(f"Initial collection using whence=0 for {timeout} seconds")
         
         # Stream events with timeout
         with requests.get(url_formed, headers=headers, stream=True, timeout=timeout+10) as response:
             if response.status_code >= 400:
                 logger.error(f"Connection failed with status code: {response.status_code}")
-                return events, latest_event_time
+                
+                # Try to refresh session if we have authentication/authorization errors
+                if response.status_code in [401, 403] and falcon and app_id:
+                    logger.info("Authentication/authorization error detected, attempting to refresh stream session")
+                    if refresh_stream_session(logger, falcon, stream_data, app_id):
+                        logger.info("Session refreshed, retrying connection...")
+                        # Retry the connection once after refresh
+                        with requests.get(url_formed, headers=headers, stream=True, timeout=timeout+10) as retry_response:
+                            if retry_response.status_code >= 400:
+                                logger.error(f"Connection still failed after refresh with status code: {retry_response.status_code}")
+                                return events, latest_event_time
+                            else:
+                                response = retry_response  # Use the successful retry response
+                    else:
+                        logger.error("Failed to refresh stream session")
+                        return events, latest_event_time
+                else:
+                    return events, latest_event_time
             
             logger.info(f"Connected successfully to stream {stream_idx + 1}, response code: {response.status_code}")
             
@@ -607,6 +745,7 @@ def consume_activity_audit_events_v2(logger: logging.Logger, stream_data: Dict[s
                     metadata = event.get('metadata', {})
                     event_type = metadata.get('eventType', 'unknown')
                     event_creation_time = metadata.get('eventCreationTime')
+                    offset_num = metadata.get('offset')
                     
                     # Skip events that are older than our checkpoint
                     if event_creation_time and event_creation_time <= last_event_time:
@@ -625,11 +764,14 @@ def consume_activity_audit_events_v2(logger: logging.Logger, stream_data: Dict[s
                         
                         events.append(event)
                         
-                        # Update latest event time
+                        # Update latest event time and offset
                         if event_creation_time and event_creation_time > latest_event_time:
                             latest_event_time = event_creation_time
                         
-                        logger.debug(f"Processed {event_type} event at {event_creation_time}")
+                        if offset_num and offset_num > latest_offset:
+                            latest_offset = offset_num
+                        
+                        logger.debug(f"Processed {event_type} event at {event_creation_time} (offset: {offset_num})")
                     
                     else:
                         # Log non-matching events at debug level
@@ -647,8 +789,21 @@ def consume_activity_audit_events_v2(logger: logging.Logger, stream_data: Dict[s
     except Exception as e:
         logger.error(f"Unexpected error for stream {stream_idx + 1}: {str(e)}")
     
-    logger.info(f"Completed streaming from stream {stream_idx + 1}, collected {len(events)} Activity Audit events")
-    return events, latest_event_time
+    # Log completion with additional context for troubleshooting
+    if len(events) == 0:
+        logger.info(f"Completed streaming from stream {stream_idx + 1}, collected {len(events)} Activity Audit events")
+        logger.info(f"Stream {stream_idx + 1} may be exhausted or rotated. Consider checking other available streams.")
+        logger.debug(f"Stream {stream_idx + 1} URL: {url}")
+        if last_offset > 0:
+            logger.debug(f"Offset used: {last_offset + 1} (from checkpoint: {last_offset})")
+        else:
+            logger.debug("Whence value used: 0 (initial start)")
+    else:
+        logger.info(f"Completed streaming from stream {stream_idx + 1}, collected {len(events)} Activity Audit events")
+        logger.info(f"Stream {stream_idx + 1} is active and providing data")
+        logger.debug(f"Latest offset processed: {latest_offset}")
+    
+    return events, latest_event_time, latest_offset
 
 
 def consume_activity_audit_events(logger: logging.Logger, stream_data: Dict[str, Any], 
@@ -767,11 +922,12 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
     """
     Stream CrowdStrike Activity Audit data to Splunk
     
-    This function retrieves Activity Audit events from CrowdStrike using APIHarnessV2 with EventStreams API:
-    1. Get available event streams using list_available_streams via APIHarnessV2
-    2. Connect to stream URLs and consume Activity Audit events with timestamp-based filtering
-    3. Use eventCreationTime (milliseconds) for checkpointing instead of offset
-    4. Default to 90 days ago for initial checkpoint (similar to XDR Alert helper)
+    This function retrieves Activity Audit events from CrowdStrike using EventStreams library:
+    1. Get available event streams using list_available_streams via EventStreams
+    2. Connect to stream URLs and consume Activity Audit events with offset-based positioning
+    3. Use offset for whence parameter (proper stream positioning) and eventCreationTime for filtering
+    4. Store both offset and timestamp in checkpoints for proper stream resumption
+    5. Default to 90 days ago for initial timestamp checkpoint and offset=0
     """
     for input_name, input_item in inputs.inputs.items():
         normalized_input_name = input_name.split("/")[-1]
@@ -817,9 +973,9 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             base_url = get_base_url_from_cloud(cloud_env)
             logger.info(f"Using CrowdStrike base URL: {base_url} (cloud: {cloud_env})")
             
-            # Handle checkpointing with timestamp-based approach
+            # Handle checkpointing with offset and timestamp approach
             checkpoint_name = f"{account_name}-{normalized_input_name}-activity-audit".replace("://", "_")
-            checkpoint_valid, last_event_time = get_checkpoint(logger, session_key, checkpoint_name)
+            checkpoint_valid, last_event_time, last_offset = get_checkpoint(logger, session_key, checkpoint_name)
             
             if not checkpoint_valid:
                 logger.error("Failed to retrieve checkpoint data")
@@ -827,9 +983,9 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             # Convert timestamp to readable format for logging
             last_event_datetime = datetime.fromtimestamp(last_event_time / 1000).isoformat() if last_event_time else "N/A"
-            logger.info(f"Last checkpoint event time: {last_event_time} ms ({last_event_datetime})")
+            logger.info(f"Last checkpoint - Event time: {last_event_time} ms ({last_event_datetime}), Offset: {last_offset}")
             
-            # Get Activity Audit data using APIHarnessV2 with timestamp filtering
+            # Get Activity Audit data using EventStreams with offset and timestamp filtering
             logger.info("Starting CrowdStrike Activity Audit collection")
             logger.info(f"Collection parameters - Account: {account_name}, Cloud: {cloud_env}, Base URL: {base_url}")
             
@@ -839,7 +995,8 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 client_id=client_id,
                 client_secret=client_secret,
                 base_url=base_url,
-                last_event_time=last_event_time
+                last_event_time=last_event_time,
+                last_offset=last_offset
             )
             collection_duration = time.time() - collection_start_time
             
@@ -849,19 +1006,25 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 logger.warning("No Activity Audit events generated")
                 continue
             
-            # Find latest event time for checkpoint
+            # Find latest event time and offset for checkpoint
             latest_event_time = last_event_time
+            latest_offset = last_offset
             for event in audit_events:
                 # Update checkpoint if this event has a newer timestamp
                 event_time = event.get('ta_data', {}).get('latest_event_time', last_event_time)
                 if event_time > latest_event_time:
                     latest_event_time = event_time
                 
-                # Also check the actual event metadata for eventCreationTime
+                # Also check the actual event metadata for eventCreationTime and offset
                 metadata = event.get('metadata', {})
                 event_creation_time = metadata.get('eventCreationTime')
                 if event_creation_time and event_creation_time > latest_event_time:
                     latest_event_time = event_creation_time
+                
+                # Track the latest offset
+                offset_num = metadata.get('offset')
+                if offset_num and offset_num > latest_offset:
+                    latest_offset = offset_num
             
             # Send events to Splunk
             sourcetype = "crowdstrike:activity:audit:json"
@@ -881,9 +1044,12 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                     if 'metadata' in event and 'eventCreationTime' in event['metadata']:
                         event_time = event['metadata']['eventCreationTime'] / 1000
                     
+                    # Extract only the 'event' portion, stripping metadata and ta_data
+                    event_data = event.get('event', {})
+                    
                     event_writer.write_event(
                         smi.Event(
-                            data=json.dumps(event, ensure_ascii=False, default=str),
+                            data=json.dumps(event_data, ensure_ascii=False, default=str),
                             index=index,
                             sourcetype=sourcetype,
                             time=event_time
@@ -899,9 +1065,9 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
                 logger.info(f"Successfully sent {len(audit_events)} Activity Audit events to Splunk in {send_duration:.2f} seconds")
                 
                 # Update checkpoint after successful event processing
-                if set_checkpoint(logger, session_key, checkpoint_name, latest_event_time):
+                if set_checkpoint(logger, session_key, checkpoint_name, latest_event_time, latest_offset):
                     latest_event_datetime = datetime.fromtimestamp(latest_event_time / 1000).isoformat() if latest_event_time else "N/A"
-                    logger.info(f"Successfully updated checkpoint to event time: {latest_event_time} ms ({latest_event_datetime})")
+                    logger.info(f"Successfully updated checkpoint - Event time: {latest_event_time} ms ({latest_event_datetime}), Offset: {latest_offset}")
                 else:
                     logger.warning("Failed to update checkpoint")
                 
