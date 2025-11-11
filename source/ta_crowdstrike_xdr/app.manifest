@@ -21,7 +21,7 @@
         "id": {
             "group": null,
             "name": "ta_crowdstrike_xdr",
-            "version": "2.5.0"
+            "version": "2.6.0"
         },
         "license": {
             "name": "LICENSE.md",

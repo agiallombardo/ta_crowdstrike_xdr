@@ -397,7 +397,7 @@ def get_crowdstrike_alerts_data_v2(logger: logging.Logger, client_id: str, clien
             
             limit = 10000
             sort = "updated_timestamp.asc"
-            time_filter = f"updated_timestamp:>='{last_checkpoint}'"
+            time_filter = f"updated_timestamp:>'{last_checkpoint}'"
             
             logger.debug(f"Alert filter: {time_filter}")
             logger.debug(f"Query parameters - Limit: {limit}, Sort: {sort}")
@@ -608,7 +608,7 @@ def get_crowdstrike_alerts_data(logger: logging.Logger, client_id: str, client_s
         
         limit = 10000
         sort = "updated_timestamp.asc"
-        time_filter = f"updated_timestamp:>='{last_checkpoint}'"
+        time_filter = f"updated_timestamp:>'{last_checkpoint}'"
         
         logger.debug(f"Alert filter: {time_filter}")
         logger.debug(f"Query parameters - Limit: {limit}, Sort: {sort}")
@@ -827,6 +827,51 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             if not alert_events:
                 logger.warning("No alert events generated")
+                continue
+            
+            # Deduplicate alerts based on alert ID + updated_timestamp
+            # This prevents the same alert from being ingested multiple times
+            # If an alert's updated_timestamp changes, it will be treated as a new event (correct behavior)
+            seen_alerts = set()  # Set of unique keys: "alert_id:updated_timestamp"
+            deduplicated_events = []
+            duplicates_count = 0
+            
+            for event in alert_events:
+                # Skip error events (they don't have alert_id/composite_id)
+                if 'alert_id' not in event and 'composite_id' not in event:
+                    deduplicated_events.append(event)
+                    continue
+                
+                # Get unique identifier for the alert
+                alert_id = event.get('composite_id') or event.get('alert_id')
+                if not alert_id:
+                    # If we can't identify the alert, include it to avoid data loss
+                    deduplicated_events.append(event)
+                    continue
+                
+                updated_ts = event.get('updated_timestamp', '')
+                
+                # Create a unique key: alert_id + updated_timestamp
+                # This allows re-ingestion if the alert was updated (timestamp changed)
+                unique_key = f"{alert_id}:{updated_ts}"
+                
+                if unique_key in seen_alerts:
+                    # Duplicate alert with same ID and timestamp - skip it
+                    duplicates_count += 1
+                    logger.debug(f"Skipping duplicate alert: {alert_id} with timestamp {updated_ts}")
+                    continue
+                
+                # New alert or updated alert - add it
+                seen_alerts.add(unique_key)
+                deduplicated_events.append(event)
+            
+            if duplicates_count > 0:
+                logger.info(f"Deduplication: Removed {duplicates_count} duplicate alert(s) from {len(alert_events)} total events")
+            
+            alert_events = deduplicated_events
+            
+            if not alert_events:
+                logger.warning("No alert events remaining after deduplication")
                 continue
             
             # Find latest timestamp for checkpoint
